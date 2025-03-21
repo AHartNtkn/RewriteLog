@@ -14,7 +14,10 @@ module RelExp (
   zipMatch,
   applySubst,
   andPattern,
-  run
+  run,
+  mkAnd,
+  mkOr,
+  mkComp
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -23,15 +26,43 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Foldable (toList)
 import Data.Functor.Classes (Eq1(..))
+import Data.List (splitAt)
 
 -- | Relational expressions indexed by an endofunctor f
 data RelExp f
   = Fail
   | Rw (Free f Int) (Free f Int)
   | Or (RelExp f) (RelExp f)
-  | And (RelExp f) (RelExp f)
+  | And Bool (RelExp f) (RelExp f)  -- Boolean indicates if And has been processed
   | Comp (RelExp f) (RelExp f)
   deriving (Show, Eq)
+
+-- | Smart constructor for And that creates a balanced tree
+mkAnd :: [RelExp f] -> RelExp f
+mkAnd [] = error "mkAnd: empty list"
+mkAnd [x] = x
+mkAnd xs = 
+  let n = length xs
+      (left, right) = splitAt (n `div` 2) xs
+  in And False (mkAnd left) (mkAnd right)
+
+-- | Smart constructor for Or that creates a balanced tree
+mkOr :: [RelExp f] -> RelExp f
+mkOr [] = error "mkOr: empty list"
+mkOr [x] = x
+mkOr xs = 
+  let n = length xs
+      (left, right) = splitAt (n `div` 2) xs
+  in Or (mkOr left) (mkOr right)
+
+-- | Smart constructor for Comp that creates a balanced tree
+mkComp :: [RelExp f] -> RelExp f
+mkComp [] = error "mkComp: empty list"
+mkComp [x] = x
+mkComp xs = 
+  let n = length xs
+      (left, right) = splitAt (n `div` 2) xs
+  in Comp (mkComp left) (mkComp right)
 
 -- | A substitution maps variable indices to terms
 type Subst f = Map Int (Free f Int)
@@ -174,29 +205,49 @@ step collect (Comp (Rw p1 p2) (Comp (Rw p3 p4) r)) =
     Nothing -> (Nothing, Fail)
     Just composed -> (Nothing, Comp composed r)
 -- And evaluation
-step collect (And Fail _) = (Nothing, Fail)
-step collect (And _ Fail) = (Nothing, Fail)
-step collect (And (Rw p1 p2) (Rw p3 p4)) = 
+step collect (And _ Fail _) = (Nothing, Fail)
+step collect (And _ _ Fail) = (Nothing, Fail)
+step collect (And _ (Rw p1 p2) (Rw p3 p4)) = 
   case andPattern (Rw p1 p2) (Rw p3 p4) of
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, pat)
-step collect (Comp (And (Rw p1 p2) (Rw p3 p4)) r) = 
+step collect (Comp (And _ (Rw p1 p2) (Rw p3 p4)) r) = 
   case andPattern (Rw p1 p2) (Rw p3 p4) of
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, Comp pat r)
-step collect (And x y) = 
-  let (rx, x') = step False x  -- Set collect to False for And patterns
+step collect (And b x y) = 
+  let (rx, x') = step False x
       (ry, y') = step False y
-  in (Nothing, And x' y')
-step collect (Comp (And x y) r) = 
-  let (rx, x') = step False x  -- Set collect to False for And patterns
+  in (Nothing, And b x' y')
+step collect (Comp (And b x y) r) = 
+  let (rx, x') = step False x
       (ry, y') = step False y
-  in (Nothing, Comp (And x' y') r)
-step collect (And (Or x y) z) = step collect (Or (And x z) (And y z))
-step collect (And x (Or y z)) = step collect (Or (And x y) (And x z))
+  in (Nothing, Comp (And b x' y') r)
+step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
+step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 -- And absorption
-step collect (Comp (Rw p1 p2) (And a b)) = step collect (And (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b))
-step collect (Comp (Rw p1 p2) (Comp (And a b) r)) = step collect (Comp (And (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b)) r)
+-- (Rw a b) (S ∩ T) ~> (Rw a b) (((Rw b b) S) ∩ ((Rw b b) T))
+-- which is valid since (Rw b b) ⊆ Id. This is an optimization.
+step collect (Comp (Rw p1 p2) (And False a b)) = 
+  let (_, stepped) = step False (And True (Comp (Rw p2 p2) a) (Comp (Rw p2 p2) b))
+  -- When And hasn't been processed, add identity composition
+  in (Nothing, Comp (Rw p1 p2) stepped)
+-- In general, we only have that R(S ∩ T) ⊆ RS ∩ RT, not R(S ∩ T) = RS ∩ RT
+-- So we have to evaluate And until it's no longer there.
+step collect (Comp (Rw p1 p2) (And True a b)) = 
+  -- When And has been processed
+  let (_, a') = step False a
+      (_, b') = step False b
+  in (Nothing, Comp (Rw p1 p2) (And True a' b'))
+step collect (Comp (Rw p1 p2) (Comp (And False a b) r)) = 
+  let (_, stepped) = step False (Comp (And True (Comp (Rw p2 p2) a) (Comp (Rw p2 p2) b)) r)
+  -- When And hasn't been processed, add identity composition
+  in (Nothing, Comp (Rw p1 p2) stepped)
+step collect (Comp (Rw p1 p2) (Comp (And True a b) r)) = 
+  -- When And has been processed
+  let (_, a') = step False a
+      (_, b') = step False b
+  in (Nothing, Comp (Rw p1 p2) (Comp (And True a' b') r))
 -- Or case
 step collect (Or Fail p) = step collect p
 step collect (Or x y) = 
