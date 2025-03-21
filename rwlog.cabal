@@ -27,6 +27,7 @@ library
   exposed-modules:
       Lib
       RelExp
+      SExpF
   other-modules:
       Paths_rwlog
   autogen-modules:
@@ -64,6 +65,9 @@ test-suite rwlog-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      AddRelSpec
+      PatternMatchSpec
+      StepSpec
       Paths_rwlog
   autogen-modules:
       Paths_rwlog

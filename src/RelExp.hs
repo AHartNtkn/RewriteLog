@@ -17,7 +17,9 @@ module RelExp (
   run,
   mkAnd,
   mkOr,
-  mkComp
+  mkComp,
+  var,
+  step
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -63,6 +65,9 @@ mkComp xs =
   let n = length xs
       (left, right) = splitAt (n `div` 2) xs
   in Comp (mkComp left) (mkComp right)
+
+var :: Int -> Free f Int
+var i = Pure i
 
 -- | A substitution maps variable indices to terms
 type Subst f = Map Int (Free f Int)
@@ -138,7 +143,8 @@ normalizeVars t =
 composePatterns :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> Maybe (RelExp f)
 composePatterns (Rw p1 p2) (Rw p3 p4) = do
   -- First rename variables in the second pattern to avoid name clashes
-  let maxVar = maximum (collectVars p1 ++ collectVars p2)
+  let vars1 = collectVars p1 ++ collectVars p2
+      maxVar = if null vars1 then -1 else maximum vars1
       shiftMap = Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
       p3' = applySubst (fmap Pure shiftMap) p3
       p4' = applySubst (fmap Pure shiftMap) p4
