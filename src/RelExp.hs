@@ -12,7 +12,8 @@ module RelExp (
   composePatterns,
   normalizeVars,
   zipMatch,
-  applySubst
+  applySubst,
+  andPattern
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -46,12 +47,12 @@ zipMatch f1 f2
   | otherwise = Nothing
 
 -- | Try to match two Free terms, returning possible substitutions for the first term's variables
-match :: (Eq1 f, Traversable f) => Free f Int -> Free f Int -> [Map.Map Int (Free f Int)]
+match :: (Eq1 f, Traversable f) => Free f Int -> Free f Int -> Maybe (Map.Map Int (Free f Int))
 match t1 t2 = solveEquations [(t1, t2)]
 
 -- | Solve a system of matching equations
-solveEquations :: (Eq1 f, Traversable f) => [Equation f] -> [Map.Map Int (Free f Int)]
-solveEquations [] = [Map.empty]  -- Empty equation set means we succeeded
+solveEquations :: (Eq1 f, Traversable f) => [Equation f] -> Maybe (Map.Map Int (Free f Int))
+solveEquations [] = Just Map.empty  -- Empty equation set means we succeeded
 solveEquations ((t1, t2):eqs) = do
   -- First solve the remaining equations
   subst <- solveEquations eqs
@@ -62,22 +63,22 @@ solveEquations ((t1, t2):eqs) = do
     -- Both terms are variables
     (Pure v1, Pure v2) ->
       if v1 == v2
-        then [subst]  -- Variables are already equal
+        then Just subst  -- Variables are already equal
         else  -- Make higher-numbered variable equal to lower-numbered one
           let (from, to) = if v1 > v2 then (v1, v2) else (v2, v1) in
-          [Map.insert from (Pure to) subst]
+          Just (Map.insert from (Pure to) subst)
     -- First term is a variable
-    (Pure v, t) -> [Map.insert v t subst]
+    (Pure v, t) -> Just (Map.insert v t subst)
     -- Second term is a variable
-    (t, Pure v) -> [Map.insert v t subst]
+    (t, Pure v) -> Just (Map.insert v t subst)
     -- Both terms are constructors
     (Free f1, Free f2)
       | fmap (const ()) f1 == fmap (const ()) f2 ->
         -- If constructors match, add equations for subterms
         solveEquations (zip (toList f1) (toList f2) ++ eqs)
-      | otherwise -> []  -- Constructor mismatch
+      | otherwise -> Nothing  -- Constructor mismatch
     -- Any other case is a mismatch
-    _ -> []
+    _ -> Nothing
 
 -- | Apply a substitution to a Free term
 applySubst :: Functor f => Subst f -> Free f Int -> Free f Int
@@ -104,7 +105,7 @@ normalizeVars t =
   in applySubst (fmap Pure varMap) t
 
 -- | Compose two pattern relations
-composePatterns :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> [RelExp f]
+composePatterns :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> Maybe (RelExp f)
 composePatterns (Rw p1 p2) (Rw p3 p4) = do
   -- First rename variables in the second pattern to avoid name clashes
   let maxVar = maximum (collectVars p1 ++ collectVars p2)
@@ -119,4 +120,26 @@ composePatterns (Rw p1 p2) (Rw p3 p4) = do
       vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p4Final)
       varMap = mkVarMap vars
   return $ Rw (applySubst (fmap Pure varMap) p1Final) (applySubst (fmap Pure varMap) p4Final)
-composePatterns _ _ = []
+composePatterns _ _ = Nothing
+
+-- | Combine two pattern relations conjunctively
+andPattern :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> Maybe (RelExp f)
+andPattern (Rw p1 p2) (Rw p3 p4) = do
+  -- First rename variables in the second pattern to avoid name clashes
+  let maxVar = maximum (collectVars p1 ++ collectVars p2)
+      shiftMap = Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
+      p3' = applySubst (fmap Pure shiftMap) p3
+      p4' = applySubst (fmap Pure shiftMap) p4
+  -- Match corresponding terms with renamed variables
+  subst1 <- match p1 p3'
+  let p2WithSubst1 = applySubst subst1 p2
+      p4WithSubst1 = applySubst subst1 p4'
+  subst2 <- match p2WithSubst1 p4WithSubst1
+  -- Apply both substitutions
+  let p1Final = applySubst subst2 (applySubst subst1 p1)
+      p2Final = applySubst subst2 p2WithSubst1
+      -- Collect variables in order of appearance
+      vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p2Final)
+      varMap = mkVarMap vars
+  return $ Rw (applySubst (fmap Pure varMap) p1Final) (applySubst (fmap Pure varMap) p2Final)
+andPattern _ _ = Nothing
