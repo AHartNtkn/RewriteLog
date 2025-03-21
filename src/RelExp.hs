@@ -13,7 +13,8 @@ module RelExp (
   normalizeVars,
   zipMatch,
   applySubst,
-  andPattern
+  andPattern,
+  run
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -25,7 +26,7 @@ import Data.Functor.Classes (Eq1(..))
 
 -- | Relational expressions indexed by an endofunctor f
 data RelExp f
-  = Empty
+  = Fail
   | Rw (Free f Int) (Free f Int)
   | Or (RelExp f) (RelExp f)
   | And (RelExp f) (RelExp f)
@@ -77,8 +78,6 @@ solveEquations ((t1, t2):eqs) = do
         -- If constructors match, add equations for subterms
         solveEquations (zip (toList f1) (toList f2) ++ eqs)
       | otherwise -> Nothing  -- Constructor mismatch
-    -- Any other case is a mismatch
-    _ -> Nothing
 
 -- | Apply a substitution to a Free term
 applySubst :: Functor f => Subst f -> Free f Int -> Free f Int
@@ -143,3 +142,86 @@ andPattern (Rw p1 p2) (Rw p3 p4) = do
       varMap = mkVarMap vars
   return $ Rw (applySubst (fmap Pure varMap) p1Final) (applySubst (fmap Pure varMap) p2Final)
 andPattern _ _ = Nothing
+
+rwLeaf :: RelExp f -> Bool
+rwLeaf (Rw _ _) = True
+rwLeaf (Or x _) = rwLeaf x
+rwLeaf _ = False
+
+distributeComp :: RelExp f -> RelExp f -> RelExp f
+distributeComp (Or x y) a = Or (distributeComp x a) (Comp y a)
+distributeComp x a = Comp x a
+
+step :: (Eq1 f, Traversable f) => Bool -> RelExp f -> (Maybe (RelExp f), RelExp f)
+-- Base cases
+step collect Fail = (Nothing, Fail)
+step collect (Rw x y) = if collect then (Just (Rw x y), Fail) else (Nothing, Rw x y)
+-- Failure cases
+step collect (Comp Fail _) = (Nothing, Fail)
+step collect (Comp _ Fail) = (Nothing, Fail)
+step collect (Comp _ (Comp Fail _)) = (Nothing, Fail)
+step collect (Comp _ (Comp _ Fail)) = (Nothing, Fail)
+-- Composition normalization
+step collect (Comp (Comp p1 p2) p3) = step collect (Comp p1 (Comp p2 p3))
+step collect (Comp p1 (Comp (Comp p2 p3) p4)) = step collect (Comp p1 (Comp p2 (Comp p3 p4)))
+-- Rewrite fusion
+step collect (Comp (Rw p1 p2) (Rw p3 p4)) = 
+  case composePatterns (Rw p1 p2) (Rw p3 p4) of
+    Nothing -> (Nothing, Fail)
+    Just composed -> (Nothing, composed)
+step collect (Comp (Rw p1 p2) (Comp (Rw p3 p4) r)) = 
+  case composePatterns (Rw p1 p2) (Rw p3 p4) of
+    Nothing -> (Nothing, Fail)
+    Just composed -> (Nothing, Comp composed r)
+-- And evaluation
+step collect (And Fail _) = (Nothing, Fail)
+step collect (And _ Fail) = (Nothing, Fail)
+step collect (And (Rw p1 p2) (Rw p3 p4)) = 
+  case andPattern (Rw p1 p2) (Rw p3 p4) of
+    Nothing -> (Nothing, Fail)
+    Just pat -> (Nothing, pat)
+step collect (Comp (And (Rw p1 p2) (Rw p3 p4)) r) = 
+  case andPattern (Rw p1 p2) (Rw p3 p4) of
+    Nothing -> (Nothing, Fail)
+    Just pat -> (Nothing, Comp pat r)
+step collect (And x y) = 
+  let (rx, x') = step False x  -- Set collect to False for And patterns
+      (ry, y') = step False y
+  in (Nothing, And x' y')
+step collect (Comp (And x y) r) = 
+  let (rx, x') = step False x  -- Set collect to False for And patterns
+      (ry, y') = step False y
+  in (Nothing, Comp (And x' y') r)
+step collect (And (Or x y) z) = step collect (Or (And x z) (And y z))
+step collect (And x (Or y z)) = step collect (Or (And x y) (And x z))
+-- And absorption
+step collect (Comp (Rw p1 p2) (And a b)) = step collect (And (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b))
+step collect (Comp (Rw p1 p2) (Comp (And a b) r)) = step collect (Comp (And (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b)) r)
+-- Or case
+step collect (Or Fail p) = step collect p
+step collect (Or x y) = 
+  let (rx, x') = step collect x
+  in (rx, Or y x')
+step collect (Comp (Or x y) r) =
+  if rwLeaf x
+  then 
+    case r of
+      Comp a r -> 
+        let (rt, stepped) = step collect (distributeComp (Or x y) a)
+        in (rt, Comp stepped r)
+      r -> 
+        let (rt, stepped) = step collect (distributeComp (Or x y) r)
+        in (rt, stepped)
+  else 
+    let (rx, xy') = step collect (Or x y)
+    in (rx, Comp xy' r)
+-- Or absorption
+step collect (Comp (Rw p1 p2) (Or a b)) = step collect (Or (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b))
+step collect (Comp (Rw p1 p2) (Comp (Or a b) r)) = step collect (Comp (Or (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b)) r)
+
+-- | Run a relational expression to completion, collecting all normalized patterns
+run :: (Eq1 f, Traversable f) => RelExp f -> [RelExp f]
+run expr = case step True expr of
+  (Just v, rest) -> v : run rest
+  (Nothing, Fail) -> []  -- Stop when we hit Fail
+  (Nothing, rest) -> run rest
