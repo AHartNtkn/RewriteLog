@@ -121,6 +121,23 @@ spec = do
       
       composePatterns p1 p2 `shouldBe` Just expected
 
+  
+  describe "Pattern Composition 2" $ do
+    it "variables names in first pattern don't matter" $ do
+      let p1 = Rw 
+            (Free $ F (Free $ G (var 2)) (var 3))
+            (Free $ R (var 3) (var 2))
+      
+      let p2 = Rw
+            (Free $ R (Free $ S (var 0)) (var 1))
+            (Free $ K (var 0))
+      
+      let expected = Rw
+            (Free $ F (Free $ G (var 0)) (Free $ S (var 1)))
+            (Free $ K (var 1))
+      
+      composePatterns p1 p2 `shouldBe` Just expected
+
     it "handles repeated variables in composition" $ do
       let p1 = Rw
             (Free $ F (var 0) (var 0))  -- F x x
@@ -146,6 +163,22 @@ spec = do
       let p1 = Rw 
             (Free $ F (var 0) (var 1))  -- F x y
             (Free $ G (var 0))          -- G x
+      
+      let p2 = Rw
+            (Free $ F (var 0) (var 1))  -- F x y
+            (Free $ G (var 1))          -- G y
+      
+      let expected = Rw
+            (Free $ F (var 0) (var 0))  -- F x y
+            (Free $ G (var 0))          -- G x where x=y
+      
+      andPattern p1 p2 `shouldBe` Just expected
+
+  describe "Pattern Conjunction 2" $ do
+    it "Variable assignments for first pattern don't matter" $ do
+      let p1 = Rw 
+            (Free $ F (var 2) (var 3))  -- F x y
+            (Free $ G (var 2))          -- G x
       
       let p2 = Rw
             (Free $ F (var 0) (var 1))  -- F x y

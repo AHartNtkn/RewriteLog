@@ -191,7 +191,6 @@ step collect (Rw x y) = if collect then (Just (Rw x y), Fail) else (Nothing, Rw 
 step collect (Comp Fail _) = (Nothing, Fail)
 step collect (Comp _ Fail) = (Nothing, Fail)
 step collect (Comp _ (Comp Fail _)) = (Nothing, Fail)
-step collect (Comp _ (Comp _ Fail)) = (Nothing, Fail)
 -- Composition normalization
 step collect (Comp (Comp p1 p2) p3) = step collect (Comp p1 (Comp p2 p3))
 step collect (Comp p1 (Comp (Comp p2 p3) p4)) = step collect (Comp p1 (Comp p2 (Comp p3 p4)))
@@ -211,18 +210,13 @@ step collect (And _ (Rw p1 p2) (Rw p3 p4)) =
   case andPattern (Rw p1 p2) (Rw p3 p4) of
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, pat)
-step collect (Comp (And _ (Rw p1 p2) (Rw p3 p4)) r) = 
-  case andPattern (Rw p1 p2) (Rw p3 p4) of
-    Nothing -> (Nothing, Fail)
-    Just pat -> (Nothing, Comp pat r)
 step collect (And b x y) = 
-  let (rx, x') = step False x
-      (ry, y') = step False y
+  let (_, x') = step False x
+      (_, y') = step False y
   in (Nothing, And b x' y')
 step collect (Comp (And b x y) r) = 
-  let (rx, x') = step False x
-      (ry, y') = step False y
-  in (Nothing, Comp (And b x' y') r)
+  let (_, a') = step False (And b x y)
+  in (Nothing, Comp a' r)
 step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
 step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 -- And absorption
@@ -236,23 +230,23 @@ step collect (Comp (Rw p1 p2) (And False a b)) =
 -- So we have to evaluate And until it's no longer there.
 step collect (Comp (Rw p1 p2) (And True a b)) = 
   -- When And has been processed
-  let (_, a') = step False a
-      (_, b') = step False b
-  in (Nothing, Comp (Rw p1 p2) (And True a' b'))
+  let (_, a') = step False (And True a b)
+  in (Nothing, Comp (Rw p1 p2) a')
 step collect (Comp (Rw p1 p2) (Comp (And False a b) r)) = 
   let (_, stepped) = step False (Comp (And True (Comp (Rw p2 p2) a) (Comp (Rw p2 p2) b)) r)
   -- When And hasn't been processed, add identity composition
   in (Nothing, Comp (Rw p1 p2) stepped)
 step collect (Comp (Rw p1 p2) (Comp (And True a b) r)) = 
   -- When And has been processed
-  let (_, a') = step False a
-      (_, b') = step False b
-  in (Nothing, Comp (Rw p1 p2) (Comp (And True a' b') r))
+  let (_, a') = step False (And True a b)
+  in (Nothing, Comp (Rw p1 p2) (Comp a' r))
 -- Or case
 step collect (Or Fail p) = step collect p
 step collect (Or x y) = 
   let (rx, x') = step collect x
-  in (rx, Or y x')
+  in case x' of
+    Fail -> (rx, y)
+    _ -> (rx, Or y x') -- Swap x and y for interleaving search
 step collect (Comp (Or x y) r) =
   if rwLeaf x
   then 
