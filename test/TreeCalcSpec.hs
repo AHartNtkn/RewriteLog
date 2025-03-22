@@ -92,11 +92,11 @@ spec = do
               mkComp [
                 -- Create constraint that prog has no universal variables
                 cnstr (RecConstraint [("noUniVar", noUniVar, var 0)]),
-                -- Map dummy variable to application of program to constant 0
+                -- Apply program to universally quantified variable
                 rw (var 0) (f (var 0) (c 0)),
                 -- Apply TreeCalc application rules
                 treeCalcApp,
-                -- Map constant 0 to program
+                -- Expect output to be input variable
                 rw (c 0) (var 0)
               ],
               -- Map program to itself
