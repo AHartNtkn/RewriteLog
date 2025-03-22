@@ -1,9 +1,10 @@
 module TreeCalcSpec (spec) where
 
 import Test.Hspec
-import TreeCalc
+import TreeCalc (f, b, l, c, treeCalcApp, TreeCalcF, noUniVar)
 import RelExp
 import Constraint (EmptyConstraint(..))
+import RecConstraint (RecConstraint, RecConstraint(..))
 
 spec :: Spec
 spec = do
@@ -77,4 +78,39 @@ spec = do
       let results = run (Comp (rw input input) treeCalcApp) :: [RelExp TreeCalcF EmptyConstraint]
       results `shouldNotBe` []
       head results `shouldBe` rw input expected 
+
+    it "(f (f (b (b l)) l) (c 0)) ~> (c 0)" $ do
+      let input = f (f (b (b l)) l) (c 0)
+      let expected = c 0
+      let results = run (Comp (rw input input) treeCalcApp) :: [RelExp TreeCalcF EmptyConstraint]
+      results `shouldNotBe` []
+      head results `shouldBe` rw input expected 
+      
+    it "Search for Identity Function" $ do
+      let idSearch = 
+            mkAnd [
+              mkComp [
+                -- Create constraint that prog has no universal variables
+                cnstr (RecConstraint [("noUniVar", noUniVar, var 0)]),
+                -- Map dummy variable to application of program to constant 0
+                rw (var 0) (f (var 0) (c 0)),
+                -- Apply TreeCalc application rules
+                treeCalcApp,
+                -- Map constant 0 to program
+                rw (c 0) (var 0)
+              ],
+              -- Map program to itself
+              rw (var 0) (var 0)
+            ] :: RelExp TreeCalcF (RecConstraint TreeCalcF)
+      
+      let results = run idSearch :: [RelExp TreeCalcF (RecConstraint TreeCalcF)]
+      results `shouldNotBe` []
+      let firstResult = head results
+      case firstResult of
+        Rw _ prog _ -> do
+          -- The identity function should be F[B[B[L]], L]
+          let expectedId = f (b (b l)) l
+          prog `shouldBe` expectedId
+        _ -> expectationFailure "Expected a rewrite rule result"
+      
       

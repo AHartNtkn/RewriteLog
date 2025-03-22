@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 
 module TreeCalc
   ( TreeCalcF(..)
@@ -12,15 +13,24 @@ module TreeCalc
   , f
   , treeCalcApp
   , prettyPrintTreeCalc
+  , noUniVar
   ) where
 
 import Control.Monad.Free (Free(..))
 import Data.Functor.Classes (Eq1(..), Show1(..))
 import RelExp (RelExp(..), mkOr, mkComp, mkAnd, var, rw)
+import RecConstraint (SimpRec(..))
 
 -- | Tree calculus functor
 data TreeCalcF x = C Int | L | B x | F x x
   deriving (Eq, Functor, Foldable, Show, Traversable)
+
+noUniVar :: SimpRec TreeCalcF
+noUniVar = SimpRec $ \case
+  C _ -> Nothing
+  L -> Just ([], mempty)
+  B x -> Just ([("noUniVar", noUniVar, x)], mempty)
+  F x y -> Just ([("noUniVar", noUniVar, x), ("noUniVar", noUniVar, y)], mempty)
 
 instance Eq1 TreeCalcF where
   liftEq eq (C n) (C n') = n == n'

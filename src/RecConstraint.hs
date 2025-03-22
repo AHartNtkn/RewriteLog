@@ -6,27 +6,23 @@
 module RecConstraint (
   SimpRec(..),
   RecConstraint(..),
-  mkRecConstraint
+  RecConstraint
 ) where
 
 import Control.Monad.Free (Free(..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Monoid (Monoid(..))
-import Data.Semigroup (Semigroup(..))
 import Constraint (Constraint(..))
+import RelExp (applySubst)
+import Data.Functor.Classes (Show1)
 
 -- | Simple recursive constraint function type
 newtype SimpRec f = SimpRec { 
-  runSimpRec :: f (Free f Int) -> Maybe ([(SimpRec f, Free f Int)], Map Int (Free f Int))
+  runSimpRec :: f (Free f Int) -> Maybe ([(String, SimpRec f, Free f Int)], Map Int (Free f Int))
 }
 
 -- | Recursive constraint type that holds a list of recursive functions and their target terms
-newtype RecConstraint f = RecConstraint [(SimpRec f, Free f Int)]
-
--- | Smart constructor for RecConstraint
-mkRecConstraint :: [(SimpRec f, Free f Int)] -> RecConstraint f
-mkRecConstraint = RecConstraint
+newtype RecConstraint f = RecConstraint [(String, SimpRec f, Free f Int)]
 
 instance Semigroup (RecConstraint f) where
   (<>) (RecConstraint xs) (RecConstraint ys) = RecConstraint (xs ++ ys)
@@ -34,12 +30,18 @@ instance Semigroup (RecConstraint f) where
 instance Monoid (RecConstraint f) where
   mempty = RecConstraint []
 
+instance Eq (RecConstraint f) where
+  _ == _ = True
+
+instance Show1 f => Show (RecConstraint f) where
+  show (RecConstraint pairs) = "{ " ++ unlines (map (\(s,_,i) -> s ++ "(" ++ show i ++ ")") pairs) ++ " }"
+
 -- | Process a term until it becomes pure or fails
 processTerm :: Functor f 
-            => (SimpRec f, Free f Int)
-            -> Maybe (Map Int (SimpRec f), Map Int (Free f Int))
-processTerm (rec, Pure i) = Just (Map.singleton i rec, mempty)
-processTerm (rec, Free f) = case runSimpRec rec f of
+            => (String, SimpRec f, Free f Int)
+            -> Maybe (Map Int (String, SimpRec f), Map Int (Free f Int))
+processTerm (s, r, Pure i) = Just (Map.singleton i (s, r), mempty)
+processTerm (s, r, Free f) = case runSimpRec r f of
   Nothing -> Nothing
   Just (newPairs, subst) -> do
     -- Process each new pair recursively
@@ -52,30 +54,30 @@ processTerm (rec, Free f) = case runSimpRec rec f of
 
 -- | Process a list of constraints once, collecting pure terms and substitutions
 processOnce :: Functor f 
-            => [(SimpRec f, Free f Int)]
-            -> Maybe (Map Int (SimpRec f), Map Int (Free f Int))
+            => [(String, SimpRec f, Free f Int)]
+            -> Maybe (Map Int (String,SimpRec f), Map Int (Free f Int))
 processOnce [] = Just (Map.empty, mempty)
-processOnce (pair:rest) = do
+processOnce (tups:rest) = do
   -- Process current pair
-  (pureMap1, subst1) <- processTerm pair
+  (pureMap1, subst1) <- processTerm tups
   -- Process rest with substitutions applied
-  let restWithSubst = [(r, applySubst subst1 t) | (r, t) <- rest]
+  let restWithSubst = [(n, r, applySubst subst1 t) | (n, r, t) <- rest]
   (pureMap2, subst2) <- processOnce restWithSubst
   -- Combine results
   return (Map.union pureMap1 pureMap2, subst1 <> subst2)
 
 -- | Check if any pure terms have substitutions and generate new pairs
 checkPures :: Functor f 
-           => Map Int (SimpRec f)  -- Pure terms map
+           => Map Int (String,SimpRec f)  -- Pure terms map
            -> Map Int (Free f Int)  -- Substitution map
-           -> ([(SimpRec f, Free f Int)], Map Int (SimpRec f), Map Int (Free f Int))
+           -> ([(String, SimpRec f, Free f Int)], Map Int (String, SimpRec f), Map Int (Free f Int))
 checkPures pureMap subst =
   let 
     -- Find pure terms that have substitutions
     (matching, nonMatching) = Map.partitionWithKey (\k _ -> Map.member k subst) pureMap
     -- Generate new pairs from matching terms
-    newPairs = [(rec, applySubst subst (Pure v)) 
-               | (v, rec) <- Map.toList matching]
+    newPairs = [(name, r, applySubst subst (Pure v)) 
+               | (v, (name, r)) <- Map.toList matching]
     -- Remove used substitutions
     remainingSubst = foldr Map.delete subst (Map.keys matching)
   in
@@ -83,17 +85,17 @@ checkPures pureMap subst =
 
 -- | Normalize constraints until reaching a fixed point
 normalizeLoop :: Functor f 
-              => [(SimpRec f, Free f Int)]  -- Current constraints
-              -> Map Int (SimpRec f)        -- Pure terms map
+              => [(String, SimpRec f, Free f Int)]  -- Current constraints
+              -> Map Int (String, SimpRec f)        -- Pure terms map
               -> Map Int (Free f Int)       -- Current substitution map
-              -> Maybe ([(SimpRec f, Free f Int)], Map Int (Free f Int))
+              -> Maybe ([(String, SimpRec f, Free f Int)], Map Int (Free f Int))
 normalizeLoop [] pureMap subst = 
   -- No more constraints to process, check pures one last time
   let (newPairs, finalPures, finalSubst) = checkPures pureMap subst
   in if null newPairs
      then 
        -- We're done - convert pure map back to pairs
-       let purePairs = [(rec, Pure v) | (v, rec) <- Map.toList finalPures]
+       let purePairs = [(name, r, Pure v) | (v, (name, r)) <- Map.toList finalPures]
        in Just (purePairs, finalSubst)
      else 
        -- Process new pairs
@@ -114,9 +116,4 @@ instance (Functor f) => Constraint (RecConstraint f) f where
     return (RecConstraint normPairs, subst)
 
   substCnstr s (RecConstraint pairs) = 
-    RecConstraint [(r, applySubst s t) | (r, t) <- pairs]
-
--- | Helper to apply a substitution to a Free term
-applySubst :: Functor f => Map Int (Free f Int) -> Free f Int -> Free f Int
-applySubst s (Pure i) = Map.findWithDefault (Pure i) i s
-applySubst s (Free t) = Free $ fmap (applySubst s) t 
+    RecConstraint [(name, r, applySubst s t) | (name, r, t) <- pairs]

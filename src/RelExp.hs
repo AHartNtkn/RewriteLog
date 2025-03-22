@@ -15,13 +15,15 @@ module RelExp (
   applySubst,
   andPattern,
   run,
+  runTrace,
   mkAnd,
   mkOr,
   mkComp,
   var,
   step,
   rw,
-  cnstr
+  cnstr,
+  prettyPrintRelExp
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -29,8 +31,8 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Foldable (toList)
-import Data.Functor.Classes (Eq1(..))
-import Data.List (splitAt)
+import Data.Functor.Classes (Eq1(..), Show1(..))
+import Data.List (splitAt, intercalate, intersperse)
 import Data.Monoid (Monoid(..))
 import Constraint (Constraint(..))
 
@@ -80,6 +82,40 @@ cnstr c = Rw (var 0) (var 0) c
 
 var :: Int -> Free f Int
 var i = Pure i
+
+-- | Pretty print a RelExp up to a specified depth
+prettyPrintRelExp :: (Show1 f, Show c) => Int -> RelExp f c -> String
+prettyPrintRelExp _ Fail = "Fail"
+prettyPrintRelExp depth (Rw p1 p2 c) = 
+  if depth <= 0 
+  then "..." 
+  else "Rw (" ++ showsPrec1 1 p1 "" ++ ") (" ++ showsPrec1 1 p2 "" ++ ") " ++ show c
+prettyPrintRelExp depth (Or p1 p2) = 
+  if depth <= 0 
+  then "..." 
+  else "Or (" ++ prettyPrintRelExp (depth-1) p1 ++ ") (" ++ prettyPrintRelExp (depth-1) p2 ++ ")"
+prettyPrintRelExp depth (And b p1 p2) = 
+  if depth <= 0 
+  then "..." 
+  else "And " ++ show b ++ " (" ++ prettyPrintRelExp (depth-1) p1 ++ ") (" ++ prettyPrintRelExp (depth-1) p2 ++ ")"
+prettyPrintRelExp depth (Comp p1 p2) = 
+  if depth <= 0 
+  then "..." 
+  else "Comp (" ++ prettyPrintRelExp (depth-1) p1 ++ ") (" ++ prettyPrintRelExp (depth-1) p2 ++ ")"
+
+-- | Helper function to show Free terms using Show1
+showsPrec1 :: Show1 f => Int -> Free f Int -> ShowS
+showsPrec1 d (Pure i) = shows i
+showsPrec1 d (Free f) = showsPrec1String d f
+
+-- | Helper function to show Free terms using Show1
+showsPrec1String :: Show1 f => Int -> f (Free f Int) -> ShowS
+showsPrec1String d f = 
+  let showsPrecFree = showsPrec1
+      showList1_ xs = showChar '[' 
+                    . foldr (.) id (intersperse (showChar ',') (map (showsPrec1 0) xs))
+                    . showChar ']'
+  in liftShowsPrec showsPrecFree showList1_ d f
 
 -- | A substitution maps variable indices to terms
 type Subst f = Map Int (Free f Int)
@@ -256,6 +292,8 @@ step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) =
   case andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, pat)
+step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
+step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 step collect (And b x y) = 
   let (_, x') = step False x
       (_, y') = step False y
@@ -263,8 +301,6 @@ step collect (And b x y) =
 step collect (Comp (And b x y) r) = 
   let (_, a') = step False (And b x y)
   in (Nothing, Comp a' r)
-step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
-step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 -- And absorption
 -- (Rw a b c) (S ∩ T) ~> (Rw a b c) (((Rw b b c) S) ∩ ((Rw b b c) T))
 -- which is valid since (Rw b b c) ⊆ Id. This is an optimization.
@@ -312,3 +348,11 @@ run expr = case step True expr of
   (Just v, rest) -> v : run rest
   (Nothing, Fail) -> []  -- Stop when we hit Fail
   (Nothing, rest) -> run rest
+
+-- | Run a relational expression to completion, returning a list of tuples containing
+-- the intermediate state and any output produced at that step
+runTrace :: (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> [(RelExp f c, Maybe (RelExp f c))]
+runTrace expr = case step True expr of
+  (output, next) -> (next, output) : case next of
+    Fail -> []  -- Stop when we hit Fail
+    _ -> runTrace next
