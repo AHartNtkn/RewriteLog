@@ -69,6 +69,7 @@ test-suite rwlog-test
       AddRelSpec
       PatternMatchSpec
       StepSpec
+      TreeCalcSpec
       Paths_rwlog
   autogen-modules:
       Paths_rwlog

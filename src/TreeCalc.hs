@@ -15,7 +15,7 @@ module TreeCalc
   ) where
 
 import Control.Monad.Free (Free(..))
-import Data.Functor.Classes (Eq1(..))
+import Data.Functor.Classes (Eq1(..), Show1(..))
 import RelExp (RelExp(..), mkOr, mkComp, mkAnd, var)
 
 -- | Tree calculus functor
@@ -28,6 +28,12 @@ instance Eq1 TreeCalcF where
   liftEq eq (B x) (B y) = eq x y
   liftEq eq (F x y) (F x' y') = eq x x' && eq y y'
   liftEq _ _ _ = False
+
+instance Show1 TreeCalcF where
+  liftShowsPrec showsPrec _ d (C n) = showString "C " . shows n
+  liftShowsPrec _ _ _ L = showString "L"
+  liftShowsPrec showsPrec _ d (B x) = showString "B " . showsPrec (d + 1) x
+  liftShowsPrec showsPrec _ d (F x y) = showString "F " . showsPrec (d + 1) x . showString " " . showsPrec (d + 1) y
 
 type TreeCalc = Free TreeCalcF
 
@@ -98,16 +104,18 @@ treeCalcApp = mkOr
 
   , -- app[F[F[w_, x_], y_], F[u_, v_]] := app[app[y, u], v]
     mkComp [
+      Rw (f (f (f (var 0) (var 1)) (var 2)) (f (var 3) (var 4)))
+         (f (f (var 2) (var 3)) (var 4)),
       mkAnd [
         mkComp [ -- app[y, u]
-          Rw (f (f (f (var 0) (var 1)) (var 2)) (f (var 3) (var 4)))
-             (f (var 2) (var 3)),
+          Rw (f (f (var 0) (var 1)) (var 2))
+             (f (var 0) (var 1)),
           treeCalcApp,
           Rw (var 0) (f (var 0) (var 1))
         ]
         , -- v
-        Rw (f (f (f (var 0) (var 1)) (var 2)) (f (var 3) (var 4)))
-           (f (var 5) (var 4))
+        Rw (f (f (var 0) (var 1)) (var 2))
+           (f (var 3) (var 2))
       ],
       treeCalcApp
     ]
