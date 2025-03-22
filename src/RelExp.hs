@@ -310,8 +310,8 @@ step collect (Comp (And b x y) r) =
   let (_, a') = step False (And b x y)
   in (Nothing, Comp a' r)
 -- And absorption
--- (Rw a b c) (S ∩ T) ~> (Rw a b c) (((Rw b b c) S) ∩ ((Rw b b c) T))
--- which is valid since (Rw b b c) ⊆ Id. This is an optimization.
+-- (Rw a b) (S ∩ T) ~> (Rw a b) (((Rw b b) S) ∩ ((Rw b b) T))
+-- which is valid since (Rw b b) ⊆ Id. This is an optimization.
 step collect (Comp (Rw p1 p2 c) (And False a b)) = 
   let (_, stepped) = step False (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b))
   in (Nothing, Comp (Rw p1 p2 c) stepped)
