@@ -88,26 +88,22 @@ spec = do
       
     it "Search for Identity Function" $ do
       let idSearch = 
-            mkAnd [
-              mkComp [
-                -- Create constraint that prog has no universal variables
-                cnstr (RecConstraint [("noUniVar", noUniVar, var 0)]),
-                -- Apply program to universally quantified variable
-                rw (var 0) (f (var 0) (c 0)),
-                -- Apply TreeCalc application rules
-                treeCalcApp,
-                -- Expect output to be input variable
-                rw (c 0) (var 0)
-              ],
-              -- Map program to itself
-              rw (var 0) (var 0)
+            mkComp [
+              -- Create constraint that input has no universal variables
+              cnstr (RecConstraint [("noUniVar", noUniVar, var 0)]),
+              -- Apply program to universally quantified variable
+              rw (var 0) (f (var 0) (c 0)),
+              -- Apply TreeCalc application rules
+              treeCalcApp,
+              -- Expect output to be input variable
+              rw (c 0) (c 0)
             ] :: RelExp TreeCalcF (RecConstraint TreeCalcF)
       
       let results = run idSearch :: [RelExp TreeCalcF (RecConstraint TreeCalcF)]
       results `shouldNotBe` []
       let firstResult = head results
       case firstResult of
-        Rw _ prog _ -> do
+        Rw prog _ _ -> do
           -- The identity function should be F[B[B[L]], L]
           let expectedId = f (b (b l)) l
           prog `shouldBe` expectedId
