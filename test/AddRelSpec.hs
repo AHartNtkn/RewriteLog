@@ -28,7 +28,7 @@ addRel = mkOr
       ]
   ]
 
--- | Addition relation for Peano arithmetic
+-- | Addition relation for Peano arithmetic, backwards
 addRelDuel :: RelExp SExpF
 addRelDuel = mkOr
   [ -- Rule: X ~~> (0 + X)

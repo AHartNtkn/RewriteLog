@@ -28,6 +28,7 @@ library
       Lib
       RelExp
       SExpF
+      TreeCalc
   other-modules:
       Paths_rwlog
   autogen-modules:
