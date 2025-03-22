@@ -5,7 +5,7 @@ module AddRelSpec (spec) where
 
 import Test.Hspec
 import SExpF
-import RelExp (RelExp(..), var, rw, mkOr, mkComp, run)
+import RelExp (RelExp(..), var, rw, mkOr, mkComp, run, dual)
 import Control.Monad.Free (Free(..))
 import Constraint (EmptyConstraint(..))
 
@@ -28,20 +28,6 @@ addRel = mkOr
       ]
   ]
 
--- | Addition relation for Peano arithmetic, backwards
-addRelDuel :: RelExp SExpF EmptyConstraint
-addRelDuel = mkOr
-  [ -- Rule: X ~~> (0 + X)
-    rw (var 0) (cons (atom "z") (var 0))
-  , -- Rule: s X ~~> find Y,Z where X = s(Y) and result = (s Z + Y)
-    mkComp
-      [ rw (cons (atom "s") (var 0)) (var 0)  -- Match s X and extract X
-      , addRelDuel                             -- Recursively find pairs for X
-      , rw (cons (var 0) (var 1))             -- For pair (A,B), make (s A, B)
-           (cons (cons (atom "s") (var 0)) (var 1))
-      ]
-  ]
-
 spec :: Spec
 spec = do
   describe "Addition Relation" $ do
@@ -54,9 +40,9 @@ spec = do
       results `shouldNotBe` []
       head results `shouldBe` rw input expected
 
-    it "generates all pairs summing to 5" $ do
+    it "generates all pairs summing to 5 by running addition backwards" $ do
       let target = toPeano 5
-          results = run (Comp (rw target target) addRelDuel)
+          results = run (Comp (rw target target) (dual addRel))
           expected = [cons (toPeano x) (toPeano (5-x)) | x <- [0..5]]
       
       -- Each result should be a rewrite rule with target on left

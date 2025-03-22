@@ -23,7 +23,8 @@ module RelExp (
   step,
   rw,
   cnstr,
-  prettyPrintRelExp
+  prettyPrintRelExp,
+  dual
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -82,6 +83,13 @@ cnstr c = Rw (var 0) (var 0) c
 
 var :: Int -> Free f Int
 var i = Pure i
+
+dual :: RelExp f c -> RelExp f c
+dual Fail = Fail
+dual (Rw p1 p2 c) = Rw p2 p1 c
+dual (Or x y) = Or (dual x) (dual y)
+dual (And b x y) = And b (dual x) (dual y)
+dual (Comp x y) = Comp (dual y) (dual x)
 
 -- | Pretty print a RelExp up to a specified depth
 prettyPrintRelExp :: (Show1 f, Show c) => Int -> RelExp f c -> String
