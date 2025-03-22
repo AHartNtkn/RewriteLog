@@ -16,7 +16,7 @@ module TreeCalc
 
 import Control.Monad.Free (Free(..))
 import Data.Functor.Classes (Eq1(..), Show1(..))
-import RelExp (RelExp(..), mkOr, mkComp, mkAnd, var)
+import RelExp (RelExp(..), mkOr, mkComp, mkAnd, var, rw)
 
 -- | Tree calculus functor
 data TreeCalcF x = C Int | L | B x | F x x
@@ -30,10 +30,10 @@ instance Eq1 TreeCalcF where
   liftEq _ _ _ = False
 
 instance Show1 TreeCalcF where
-  liftShowsPrec showsPrec _ d (C n) = showString "C " . shows n
+  liftShowsPrec sp _ d (C n) = showString "C " . shows n
   liftShowsPrec _ _ _ L = showString "L"
-  liftShowsPrec showsPrec _ d (B x) = showString "B " . showsPrec (d + 1) x
-  liftShowsPrec showsPrec _ d (F x y) = showString "F " . showsPrec (d + 1) x . showString " " . showsPrec (d + 1) y
+  liftShowsPrec sp _ d (B x) = showString "B " . sp 11 x
+  liftShowsPrec sp _ d (F x y) = showString "F " . sp 11 x . showChar ' ' . sp 11 y
 
 type TreeCalc = Free TreeCalcF
 
@@ -58,38 +58,38 @@ prettyPrintTreeCalc (Free (B x)) = "B[" ++ prettyPrintTreeCalc x ++ "]"
 prettyPrintTreeCalc (Free (F x y)) = "F[" ++ prettyPrintTreeCalc x ++ ", " ++ prettyPrintTreeCalc y ++ "]"
 
 -- | Tree calculus application rules using RelExp
-treeCalcApp :: RelExp TreeCalcF
+treeCalcApp :: Monoid c => RelExp TreeCalcF c
 treeCalcApp = mkOr
   [ -- app[L, z_] := B[z]
-    Rw (f l (var 0))
+    rw (f l (var 0))
        (b (var 0))
 
   , -- app[B[y_], z_] := F[y, z]
-    Rw (f (b (var 0)) (var 1))
+    rw (f (b (var 0)) (var 1))
        (f (var 0) (var 1))
 
   , -- app[F[L, y_], z_] := y
-    Rw (f (f l (var 0)) (var 1))
+    rw (f (f l (var 0)) (var 1))
        (var 0)
 
   , -- app[F[F[w_, x_], y_], L] := w
-    Rw (f (f (f (var 0) (var 1)) (var 2)) l)
+    rw (f (f (f (var 0) (var 1)) (var 2)) l)
        (var 0)
 
   , -- app[F[B[x_], y_], z_] := app[app[x, z], app[y, z]]
     mkComp [
       mkAnd [
         mkComp [ -- app[x, z]
-          Rw (f (f (b (var 0)) (var 1)) (var 2))
+          rw (f (f (b (var 0)) (var 1)) (var 2))
              (f (var 0) (var 2)),
           treeCalcApp,
-          Rw (var 0) (f (var 0) (var 1))
+          rw (var 0) (f (var 0) (var 1))
         ],
         mkComp [ -- app[y, z]
-          Rw (f (f (b (var 0)) (var 1)) (var 2))
+          rw (f (f (b (var 0)) (var 1)) (var 2))
              (f (var 1) (var 2)),
           treeCalcApp,
-          Rw (var 1) (f (var 0) (var 1))
+          rw (var 1) (f (var 0) (var 1))
         ]
       ],
       treeCalcApp
@@ -97,24 +97,24 @@ treeCalcApp = mkOr
 
   , -- app[F[F[w_, x_], y_], B[u_]] := app[x, u]
     mkComp [
-      Rw (f (f (f (var 0) (var 1)) (var 2)) (b (var 3)))
+      rw (f (f (f (var 0) (var 1)) (var 2)) (b (var 3)))
          (f (var 1) (var 3)),
       treeCalcApp
     ]
 
   , -- app[F[F[w_, x_], y_], F[u_, v_]] := app[app[y, u], v]
     mkComp [
-      Rw (f (f (f (var 0) (var 1)) (var 2)) (f (var 3) (var 4)))
+      rw (f (f (f (var 0) (var 1)) (var 2)) (f (var 3) (var 4)))
          (f (f (var 2) (var 3)) (var 4)),
       mkAnd [
         mkComp [ -- app[y, u]
-          Rw (f (f (var 0) (var 1)) (var 2))
+          rw (f (f (var 0) (var 1)) (var 2))
              (f (var 0) (var 1)),
           treeCalcApp,
-          Rw (var 0) (f (var 0) (var 1))
+          rw (var 0) (f (var 0) (var 1))
         ]
         , -- v
-        Rw (f (f (var 0) (var 1)) (var 2))
+        rw (f (f (var 0) (var 1)) (var 2))
            (f (var 3) (var 2))
       ],
       treeCalcApp

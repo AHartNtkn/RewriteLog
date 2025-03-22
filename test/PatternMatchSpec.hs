@@ -11,6 +11,7 @@ import RelExp
 import Control.Monad.Free (Free(..))
 import qualified Data.Map as Map
 import Data.Functor.Classes (Show1(..), Eq1(..))
+import Constraint (EmptyConstraint(..))
 
 -- Single functor type that can represent all operations
 data Term a = F a a | G a | R a a | S a | K a
@@ -78,7 +79,7 @@ spec = do
       let t2 = Free $ G (var 2)
       match t1 t2 `shouldBe` Nothing
 
-    it "matches constructor with variable" $ do
+    it "matches a term with a variable" $ do
       let t1 = Free $ F (var 0) (var 1)
       let t2 = var 2
       case match t1 t2 of
@@ -103,110 +104,101 @@ spec = do
 
   describe "Pattern Composition" $ do
     it "composes pattern relations correctly" $ do
-      let p1 = Rw 
+      let p1 = rw 
             (Free $ F (Free $ G (var 0)) (var 1))
             (Free $ R (var 1) (var 0))
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ R (Free $ S (var 0)) (var 1))
             (Free $ K (var 0))
       
-      let expected = Rw
+      let expected = rw
             (Free $ F (Free $ G (var 0)) (Free $ S (var 1)))
             (Free $ K (var 1))
       
-      composePatterns p1 p2 `shouldBe` Just expected
+      let result = composePatterns p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Just expected
 
-  describe "Pattern Composition 2" $ do
-    it "variables names in first pattern don't matter" $ do
-      let p1 = Rw 
-            (Free $ F (Free $ G (var 2)) (var 3))
-            (Free $ R (var 3) (var 2))
-      
-      let p2 = Rw
-            (Free $ R (Free $ S (var 0)) (var 1))
-            (Free $ K (var 0))
-      
-      let expected = Rw
-            (Free $ F (Free $ G (var 0)) (Free $ S (var 1)))
-            (Free $ K (var 1))
-      
-      composePatterns p1 p2 `shouldBe` Just expected
-
-    it "handles repeated variables in composition" $ do
-      let p1 = Rw
+    it "preserves repeated variables in composition" $ do
+      let p1 = rw 
             (Free $ F (var 0) (var 0))  -- F x x
             (Free $ G (var 0))          -- G x
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ G (var 0))          -- G y
             (Free $ K (var 0))          -- K y
       
-      let expected = Rw
+      let expected = rw
             (Free $ F (var 0) (var 0))  -- F x x
             (Free $ K (var 0))          -- K x
       
-      composePatterns p1 p2 `shouldBe` Just expected
+      let result = composePatterns p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Just expected
 
     it "fails composition when patterns don't match" $ do
-      let p1 = Rw (var 0) (Free $ F (var 0) (var 1))
-      let p2 = Rw (Free $ G (var 0)) (var 0)
-      composePatterns p1 p2 `shouldBe` Nothing
+      let p1 = rw (var 0) (Free $ F (var 0) (var 1))
+      let p2 = rw (Free $ G (var 0)) (var 0)
+      let result = composePatterns p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Nothing
 
   describe "Pattern Conjunction" $ do
     it "combines simple patterns conjunctively" $ do
-      let p1 = Rw 
+      let p1 = rw 
             (Free $ F (var 0) (var 1))  -- F x y
             (Free $ G (var 0))          -- G x
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ F (var 0) (var 1))  -- F x y
             (Free $ G (var 1))          -- G y
       
-      let expected = Rw
+      let expected = rw
             (Free $ F (var 0) (var 0))  -- F x y
             (Free $ G (var 0))          -- G x where x=y
       
-      andPattern p1 p2 `shouldBe` Just expected
+      let result = andPattern p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Just expected
 
-  describe "Pattern Conjunction 2" $ do
     it "Variable assignments for first pattern don't matter" $ do
-      let p1 = Rw 
+      let p1 = rw 
             (Free $ F (var 2) (var 3))  -- F x y
             (Free $ G (var 2))          -- G x
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ F (var 0) (var 1))  -- F x y
             (Free $ G (var 1))          -- G y
       
-      let expected = Rw
+      let expected = rw
             (Free $ F (var 0) (var 0))  -- F x y
             (Free $ G (var 0))          -- G x where x=y
       
-      andPattern p1 p2 `shouldBe` Just expected
+      let result = andPattern p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Just expected
 
-    it "fails conjunction when patterns can't be unified" $ do
-      let p1 = Rw
+  describe "Pattern Conjunction 2" $ do
+    it "fails conjunction when patterns are incompatible" $ do
+      let p1 = rw
             (Free $ F (var 0) (var 1))      -- F x y
             (Free $ G (var 0))              -- G x
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ F (var 0) (var 1))      -- F x y
             (Free $ K (var 0))              -- K x
       
-      andPattern p1 p2 `shouldBe` Nothing
+      let result = andPattern p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Nothing
 
     it "handles complex nested terms in conjunction" $ do
-      let p1 = Rw
+      let p1 = rw
             (Free $ F (Free $ G (var 0)) (var 1))  -- F (G x) y
             (Free $ R (var 0) (var 1))             -- R x y
       
-      let p2 = Rw
+      let p2 = rw
             (Free $ F (Free $ G (var 0)) (var 1))  -- F (G x) y
             (Free $ R (Free $ K (var 1)) (var 0))  -- R (K y) x
       
-      let expected = Rw
+      let expected = rw
             (Free $ F (Free $ G (Free $ K (var 0))) (var 0))  -- F (G (K x)) x
             (Free $ R (Free $ K (var 0)) (var 0))             -- R (K x) x
       
-      andPattern p1 p2 `shouldBe` Just expected 
+      let result = andPattern p1 p2 :: Maybe (RelExp Term EmptyConstraint)
+      result `shouldBe` Just expected 

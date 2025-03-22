@@ -25,7 +25,9 @@ source-repository head
 
 library
   exposed-modules:
+      Constraint
       Lib
+      RecConstraint
       RelExp
       SExpF
       TreeCalc

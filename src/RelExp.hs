@@ -19,7 +19,9 @@ module RelExp (
   mkOr,
   mkComp,
   var,
-  step
+  step,
+  rw,
+  cnstr
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -29,18 +31,20 @@ import Data.Map (Map)
 import Data.Foldable (toList)
 import Data.Functor.Classes (Eq1(..))
 import Data.List (splitAt)
+import Data.Monoid (Monoid(..))
+import Constraint (Constraint(..))
 
--- | Relational expressions indexed by an endofunctor f
-data RelExp f
+-- | Relational expressions indexed by an endofunctor f and constraint type c
+data RelExp f c
   = Fail
-  | Rw (Free f Int) (Free f Int)
-  | Or (RelExp f) (RelExp f)
-  | And Bool (RelExp f) (RelExp f)  -- Boolean indicates if And has been processed
-  | Comp (RelExp f) (RelExp f)
+  | Rw (Free f Int) (Free f Int) c
+  | Or (RelExp f c) (RelExp f c)
+  | And Bool (RelExp f c) (RelExp f c)  -- Boolean indicates if And has been processed
+  | Comp (RelExp f c) (RelExp f c)
   deriving (Show, Eq)
 
 -- | Smart constructor for And that creates a balanced tree
-mkAnd :: [RelExp f] -> RelExp f
+mkAnd :: [RelExp f c] -> RelExp f c
 mkAnd [] = error "mkAnd: empty list"
 mkAnd [x] = x
 mkAnd xs = 
@@ -49,7 +53,7 @@ mkAnd xs =
   in And False (mkAnd left) (mkAnd right)
 
 -- | Smart constructor for Or that creates a balanced tree
-mkOr :: [RelExp f] -> RelExp f
+mkOr :: [RelExp f c] -> RelExp f c
 mkOr [] = error "mkOr: empty list"
 mkOr [x] = x
 mkOr xs = 
@@ -58,13 +62,21 @@ mkOr xs =
   in Or (mkOr left) (mkOr right)
 
 -- | Smart constructor for Comp that creates a balanced tree
-mkComp :: [RelExp f] -> RelExp f
+mkComp :: [RelExp f c] -> RelExp f c
 mkComp [] = error "mkComp: empty list"
 mkComp [x] = x
 mkComp xs = 
   let n = length xs
       (left, right) = splitAt (n `div` 2) xs
   in Comp (mkComp left) (mkComp right)
+
+-- | Helper to create a rewrite rule with empty constraint
+rw :: (Monoid c) => Free f Int -> Free f Int -> RelExp f c
+rw l r = Rw l r mempty
+
+-- | Helper to create a rewrite rule with a given constraint
+cnstr :: c -> RelExp f c
+cnstr c = Rw (var 0) (var 0) c
 
 var :: Int -> Free f Int
 var i = Pure i
@@ -140,59 +152,87 @@ normalizeVars t =
   in applySubst (fmap Pure varMap) t
 
 -- | Compose two pattern relations
-composePatterns :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> Maybe (RelExp f)
-composePatterns (Rw p1 p2) (Rw p3 p4) = do
+composePatterns :: forall f c. (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> RelExp f c -> Maybe (RelExp f c)
+composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) = do
   -- First rename variables in the second pattern to avoid name clashes
   let vars1 = collectVars p1 ++ collectVars p2
       maxVar = if null vars1 then -1 else maximum vars1
-      shiftMap = Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
-      p3' = applySubst (fmap Pure shiftMap) p3
-      p4' = applySubst (fmap Pure shiftMap) p4
+      shiftMap :: Map Int (Free f Int)
+      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
+      p3' = applySubst shiftMap p3
+      p4' = applySubst shiftMap p4
+      c2' = substCnstr shiftMap c2
   -- Now match with renamed variables
   subst <- match p2 p3'
   let p1Final = applySubst subst p1
       p4Final = applySubst subst p4'
+      c1' = substCnstr subst c1
+      c2'' = substCnstr subst c2'
       -- Collect variables in order of appearance
       vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p4Final)
-      varMap = mkVarMap vars
-  return $ Rw (applySubst (fmap Pure varMap) p1Final) (applySubst (fmap Pure varMap) p4Final)
+      varMap :: Map Int (Free f Int)
+      varMap = fmap Pure $ mkVarMap vars
+      -- Apply final variable normalization to terms and constraints
+      p1Norm = applySubst varMap p1Final
+      p4Norm = applySubst varMap p4Final
+      c1Norm = substCnstr varMap c1'
+      c2Norm = substCnstr varMap c2''
+  -- Normalize the combined constraint
+  (cFinal, normSubst) <- normalize (mappend c1Norm c2Norm)
+  -- Apply any substitutions from constraint normalization
+  return $ Rw (applySubst normSubst p1Norm) (applySubst normSubst p4Norm) cFinal
 composePatterns _ _ = Nothing
 
 -- | Combine two pattern relations conjunctively
-andPattern :: (Eq1 f, Traversable f) => RelExp f -> RelExp f -> Maybe (RelExp f)
-andPattern (Rw p1 p2) (Rw p3 p4) = do
+andPattern :: forall f c. (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> RelExp f c -> Maybe (RelExp f c)
+andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) = do
   -- First rename variables in the second pattern to avoid name clashes
   let maxVar = maximum (collectVars p1 ++ collectVars p2)
-      shiftMap = Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
-      p3' = applySubst (fmap Pure shiftMap) p3
-      p4' = applySubst (fmap Pure shiftMap) p4
+      shiftMap :: Map Int (Free f Int)
+      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
+      p3' = applySubst shiftMap p3
+      p4' = applySubst shiftMap p4
+      c2' = substCnstr shiftMap c2
   -- Match corresponding terms with renamed variables
   subst1 <- match p1 p3'
   let p2WithSubst1 = applySubst subst1 p2
       p4WithSubst1 = applySubst subst1 p4'
+      c1' = substCnstr subst1 c1
+      c2'' = substCnstr subst1 c2'
   subst2 <- match p2WithSubst1 p4WithSubst1
   -- Apply both substitutions
   let p1Final = applySubst subst2 (applySubst subst1 p1)
       p2Final = applySubst subst2 p2WithSubst1
+      c1'' = substCnstr subst2 c1'
+      c2''' = substCnstr subst2 c2''
       -- Collect variables in order of appearance
       vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p2Final)
-      varMap = mkVarMap vars
-  return $ Rw (applySubst (fmap Pure varMap) p1Final) (applySubst (fmap Pure varMap) p2Final)
+      varMap :: Map Int (Free f Int)
+      varMap = fmap Pure $ mkVarMap vars
+      -- Apply final variable normalization to terms and constraints
+      p1Norm = applySubst varMap p1Final
+      p2Norm = applySubst varMap p2Final
+      c1Norm = substCnstr varMap c1''
+      c2Norm = substCnstr varMap c2'''
+  -- Normalize the combined constraint
+  (cFinal, normSubst) <- normalize (mappend c1Norm c2Norm)
+  -- Apply any substitutions from constraint normalization
+  return $ Rw (applySubst normSubst p1Norm) (applySubst normSubst p2Norm) cFinal
 andPattern _ _ = Nothing
 
-rwLeaf :: RelExp f -> Bool
-rwLeaf (Rw _ _) = True
+rwLeaf :: RelExp f c -> Bool
+rwLeaf (Rw _ _ _) = True
 rwLeaf (Or x _) = rwLeaf x
 rwLeaf _ = False
 
-distributeComp :: RelExp f -> RelExp f -> RelExp f
+distributeComp :: RelExp f c -> RelExp f c -> RelExp f c
 distributeComp (Or x y) a = Or (distributeComp x a) (Comp y a)
 distributeComp x a = Comp x a
 
-step :: (Eq1 f, Traversable f) => Bool -> RelExp f -> (Maybe (RelExp f), RelExp f)
+step :: (Eq1 f, Traversable f, Constraint c f) => Bool -> RelExp f c -> (Maybe (RelExp f c), RelExp f c)
 -- Base cases
 step collect Fail = (Nothing, Fail)
-step collect (Rw x y) = if collect then (Just (Rw x y), Fail) else (Nothing, Rw x y)
+step collect (Rw x y c) = if collect then (Just (Rw x y c), Fail) else (Nothing, Rw x y c)
 -- Failure cases
 step collect (Comp Fail _) = (Nothing, Fail)
 step collect (Comp _ Fail) = (Nothing, Fail)
@@ -201,19 +241,19 @@ step collect (Comp _ (Comp Fail _)) = (Nothing, Fail)
 step collect (Comp (Comp p1 p2) p3) = step collect (Comp p1 (Comp p2 p3))
 step collect (Comp p1 (Comp (Comp p2 p3) p4)) = step collect (Comp p1 (Comp p2 (Comp p3 p4)))
 -- Rewrite fusion
-step collect (Comp (Rw p1 p2) (Rw p3 p4)) = 
-  case composePatterns (Rw p1 p2) (Rw p3 p4) of
+step collect (Comp (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
+  case composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> (Nothing, Fail)
     Just composed -> (Nothing, composed)
-step collect (Comp (Rw p1 p2) (Comp (Rw p3 p4) r)) = 
-  case composePatterns (Rw p1 p2) (Rw p3 p4) of
+step collect (Comp (Rw p1 p2 c1) (Comp (Rw p3 p4 c2) r)) = 
+  case composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> (Nothing, Fail)
     Just composed -> (Nothing, Comp composed r)
 -- And evaluation
 step collect (And _ Fail _) = (Nothing, Fail)
 step collect (And _ _ Fail) = (Nothing, Fail)
-step collect (And _ (Rw p1 p2) (Rw p3 p4)) = 
-  case andPattern (Rw p1 p2) (Rw p3 p4) of
+step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
+  case andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, pat)
 step collect (And b x y) = 
@@ -226,26 +266,22 @@ step collect (Comp (And b x y) r) =
 step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
 step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 -- And absorption
--- (Rw a b) (S ∩ T) ~> (Rw a b) (((Rw b b) S) ∩ ((Rw b b) T))
--- which is valid since (Rw b b) ⊆ Id. This is an optimization.
-step collect (Comp (Rw p1 p2) (And False a b)) = 
-  let (_, stepped) = step False (And True (Comp (Rw p2 p2) a) (Comp (Rw p2 p2) b))
-  -- When And hasn't been processed, add identity composition
-  in (Nothing, Comp (Rw p1 p2) stepped)
+-- (Rw a b c) (S ∩ T) ~> (Rw a b c) (((Rw b b c) S) ∩ ((Rw b b c) T))
+-- which is valid since (Rw b b c) ⊆ Id. This is an optimization.
+step collect (Comp (Rw p1 p2 c) (And False a b)) = 
+  let (_, stepped) = step False (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b))
+  in (Nothing, Comp (Rw p1 p2 c) stepped)
+step collect (Comp (Rw p1 p2 c) (Comp (And False a b) r)) = 
+  let (_, stepped) = step False (Comp (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b)) r)
+  in (Nothing, Comp (Rw p1 p2 c) stepped)
 -- In general, we only have that R(S ∩ T) ⊆ RS ∩ RT, not R(S ∩ T) = RS ∩ RT
 -- So we have to evaluate And until it's no longer there.
-step collect (Comp (Rw p1 p2) (And True a b)) = 
-  -- When And has been processed
+step collect (Comp (Rw p1 p2 c) (And True a b)) = 
   let (_, a') = step False (And True a b)
-  in (Nothing, Comp (Rw p1 p2) a')
-step collect (Comp (Rw p1 p2) (Comp (And False a b) r)) = 
-  let (_, stepped) = step False (Comp (And True (Comp (Rw p2 p2) a) (Comp (Rw p2 p2) b)) r)
-  -- When And hasn't been processed, add identity composition
-  in (Nothing, Comp (Rw p1 p2) stepped)
-step collect (Comp (Rw p1 p2) (Comp (And True a b) r)) = 
-  -- When And has been processed
+  in (Nothing, Comp (Rw p1 p2 c) a')
+step collect (Comp (Rw p1 p2 c) (Comp (And True a b) r)) = 
   let (_, a') = step False (And True a b)
-  in (Nothing, Comp (Rw p1 p2) (Comp a' r))
+  in (Nothing, Comp (Rw p1 p2 c) (Comp a' r))
 -- Or case
 step collect (Or Fail p) = step collect p
 step collect (Or x y) = 
@@ -267,11 +303,11 @@ step collect (Comp (Or x y) r) =
     let (rx, xy') = step collect (Or x y)
     in (rx, Comp xy' r)
 -- Or absorption
-step collect (Comp (Rw p1 p2) (Or a b)) = step collect (Or (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b))
-step collect (Comp (Rw p1 p2) (Comp (Or a b) r)) = step collect (Comp (Or (Comp (Rw p1 p2) a) (Comp (Rw p1 p2) b)) r)
+step collect (Comp (Rw p1 p2 c) (Or a b)) = step collect (Or (Comp (Rw p1 p2 c) a) (Comp (Rw p1 p2 c) b))
+step collect (Comp (Rw p1 p2 c) (Comp (Or a b) r)) = step collect (Comp (Or (Comp (Rw p1 p2 c) a) (Comp (Rw p1 p2 c) b)) r)
 
 -- | Run a relational expression to completion, collecting all normalized patterns
-run :: (Eq1 f, Traversable f) => RelExp f -> [RelExp f]
+run :: (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> [RelExp f c]
 run expr = case step True expr of
   (Just v, rest) -> v : run rest
   (Nothing, Fail) -> []  -- Stop when we hit Fail
