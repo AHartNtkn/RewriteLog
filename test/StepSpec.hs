@@ -11,6 +11,7 @@ import RelExp
 import Control.Monad.Free (Free(..))
 import qualified Data.Map as Map
 import Data.Functor.Classes (Show1(..), Eq1(..))
+import Constraint (EmptyConstraint(..))
 
 -- Simple functor for testing
 data TestF a = A a | B a a
@@ -27,120 +28,123 @@ instance Eq1 TestF where
   liftEq eq (B x1 y1) (B x2 y2) = eq x1 x2 && eq y1 y2
   liftEq _ _ _ = False
 
+stepi :: Bool -> RelExp TestF EmptyConstraint -> (Maybe (RelExp TestF EmptyConstraint), RelExp TestF EmptyConstraint)
+stepi = step
+
 spec :: Spec
 spec = do
   describe "step function" $ do
     it "handles base case Fail" $ do
-      let (result, next) = step True (Fail :: RelExp TestF)
+      let (result, next) = stepi True Fail
       result `shouldBe` Nothing
       next `shouldBe` Fail
 
     it "handles base case Rw with collect=True" $ do
-      let pat = Rw (var 0) (var 1) :: RelExp TestF
-      let (result, next) = step True pat
+      let pat = rw (var 0) (var 1)
+      let (result, next) = stepi True pat
       result `shouldBe` Just pat
       next `shouldBe` Fail
 
     it "handles base case Rw with collect=False" $ do
-      let pat = Rw (var 0) (var 1) :: RelExp TestF
-      let (result, next) = step False pat
+      let pat = rw (var 0) (var 1)
+      let (result, next) = stepi False pat
       result `shouldBe` Nothing
       next `shouldBe` pat
 
     it "handles Comp with Fail on left" $ do
-      let expr = Comp Fail (Rw (var 0) (var 1)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp Fail (rw (var 0) (var 1))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldBe` Fail
 
     it "handles Comp with Fail on right" $ do
-      let expr = Comp (Rw (var 0) (var 1)) Fail :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (rw (var 0) (var 1)) Fail
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldBe` Fail
 
     it "handles nested Comp normalization" $ do
-      let expr = Comp (Comp (Rw (var 0) (var 1)) (Rw (var 1) (var 2))) (Rw (var 2) (var 3)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (Comp (rw (var 0) (var 1)) (rw (var 1) (var 2))) (rw (var 2) (var 3))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be restructured
 
     it "handles rewrite fusion" $ do
-      let expr = Comp (Rw (var 0) (var 1)) (Rw (var 1) (var 2)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (rw (var 0) (var 1)) (rw (var 1) (var 2))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
-      next `shouldBe` Rw (var 0) (var 1)
+      next `shouldBe` rw (var 0) (var 1)
 
     it "handles And with Fail" $ do
-      let expr = And False Fail (Rw (var 0) (var 1)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = And False Fail (rw (var 0) (var 1))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldBe` Fail
 
-    it "handles And between two rewrites" $ do
-      let expr = And False (Rw (var 0) (var 1)) (Rw (var 0) (var 1)) :: RelExp TestF
-      let (result, next) = step True expr
+    it "handles And with identical patterns" $ do
+      let expr = And False (rw (var 0) (var 1)) (rw (var 0) (var 1))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
-      next `shouldBe` Rw (var 0) (var 1)
+      next `shouldBe` rw (var 0) (var 1)
 
     it "handles And distribution over Or" $ do
-      let expr = And False (Or (Rw (var 0) (var 1)) (Rw (var 1) (var 2))) (Rw (var 2) (var 3)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = And False (Or (rw (var 0) (var 1)) (rw (var 1) (var 2))) (rw (var 2) (var 3))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be distributed
 
     it "handles And absorption with identity" $ do
-      let expr = Comp (Rw (var 0) (var 1)) (And False (Rw (var 1) (var 2)) (Rw (var 1) (var 3))) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (rw (var 0) (var 1)) (And False (rw (var 1) (var 2)) (rw (var 1) (var 3)))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be absorbed
 
     it "handles Or with Fail" $ do
-      let expr = Or Fail (Rw (var 0) (var 1)) :: RelExp TestF
-      let (result, next) = step True expr
-      result `shouldBe` (Just (Rw (var 0) (var 1)))
+      let expr = Or Fail (rw (var 0) (var 1))
+      let (result, next) = stepi True expr
+      result `shouldBe` (Just (rw (var 0) (var 1)))
       next `shouldBe` Fail
 
     it "handles Or distribution over Comp" $ do
-      let expr = Comp (Or (Rw (var 0) (var 1)) (Rw (var 1) (var 2))) (Rw (var 2) (var 3)) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (Or (rw (var 0) (var 1)) (rw (var 1) (var 2))) (rw (var 2) (var 3))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be distributed
 
     it "handles Or absorption" $ do
-      let expr = Comp (Rw (var 0) (var 1)) (Or (Rw (var 1) (var 2)) (Rw (var 1) (var 3))) :: RelExp TestF
-      let (result, next) = step True expr
+      let expr = Comp (rw (var 0) (var 1)) (Or (rw (var 1) (var 2)) (rw (var 1) (var 3)))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be absorbed
 
     it "handles complex nested expressions" $ do
       let expr = Comp 
             (Or 
-              (Rw (var 0) (var 1))
+              (rw (var 0) (var 1))
               (And False 
-                (Rw (var 0) (var 2))
-                (Rw (var 2) (var 1))))
+                (rw (var 0) (var 2))
+                (rw (var 2) (var 1))))
             (Comp 
-              (Rw (var 1) (var 3))
+              (rw (var 1) (var 3))
               (Or 
-                (Rw (var 3) (var 4))
-                (Rw (var 3) (var 5)))) :: RelExp TestF
-      let (result, next) = step True expr
+                (rw (var 3) (var 4))
+                (rw (var 3) (var 5))))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
       next `shouldNotBe` expr  -- Should be transformed
 
     it "handles pattern matching with TestF functor" $ do
       let expr = Comp 
-            (Rw (Free $ A (var 0)) (Free $ B (var 0) (var 1)))
-            (Rw (Free $ B (var 0) (var 1)) (Free $ A (var 1))) :: RelExp TestF
-      let (result, next) = step True expr
+            (rw (Free $ A (var 0)) (Free $ B (var 0) (var 1)))
+            (rw (Free $ B (var 0) (var 1)) (Free $ A (var 1)))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
-      next `shouldBe` Rw (Free $ A (var 0)) (Free $ A (var 1)) 
+      next `shouldBe` rw (Free $ A (var 0)) (Free $ A (var 1))
 
     it "Successor test" $ do
       let expr = Comp 
-            (Rw (Free $ B (Free $ A (var 0)) (var 1)) (Free $ B (var 0) (var 1)))
-            (Rw (Free $ B (Free $ A (var 0)) (var 1)) (Free $ B (var 0) (var 1))) :: RelExp TestF
-      let (result, next) = step True expr
+            (rw (Free $ B (Free $ A (var 0)) (var 1)) (Free $ B (var 0) (var 1)))
+            (rw (Free $ B (Free $ A (var 0)) (var 1)) (Free $ B (var 0) (var 1)))
+      let (result, next) = stepi True expr
       result `shouldBe` Nothing
-      next `shouldBe` (Rw (Free $ B (Free $ A (Free $ A (var 0))) (var 1)) (Free $ B (var 0) (var 1)))
+      next `shouldBe` (rw (Free $ B (Free $ A (Free $ A (var 0))) (var 1)) (Free $ B (var 0) (var 1)))
