@@ -5,7 +5,7 @@ module AddRelSpec (spec) where
 
 import Test.Hspec
 import SExpF
-import RelExp (RelExp(..), var, rw, mkOr, mkComp, run, dual)
+import RelExp (RelExp(..), var, rw, mkOr, mkComp, mkAnd, run, dual)
 import Control.Monad.Free (Free(..))
 import Constraint (EmptyConstraint(..))
 
@@ -28,6 +28,19 @@ addRel = mkOr
       ]
   ]
 
+subRel :: RelExp SExpF EmptyConstraint
+subRel = 
+  mkComp
+    [ mkAnd
+      [ mkComp
+        [ rw (cons (var 0) (var 1)) (var 0)
+        , dual addRel
+        ]
+      , rw (cons (var 0) (var 1)) (cons (var 1) (var 2))
+      ]
+    , rw (cons (var 0) (var 1)) (var 1)
+    ]
+
 spec :: Spec
 spec = do
   describe "Addition Relation" $ do
@@ -37,6 +50,7 @@ spec = do
           results = run (Comp (rw input input) addRel)
       putStrLn $ "Input: " ++ ppSExp input
       putStrLn $ "Expected: " ++ ppSExp expected
+      putStrLn $ "Got: " ++ show results
       results `shouldNotBe` []
       head results `shouldBe` rw input expected
 
@@ -56,3 +70,12 @@ spec = do
       mapM_ (putStrLn . ("  " ++) . ppSExp) pairs
       
       pairs `shouldMatchList` expected
+
+    it "calculate difference between five and three." $ do
+      let input = cons (toPeano 5) (toPeano 3)
+          results = run (Comp (rw input input) subRel)
+          expected = (toPeano 2)
+
+      -- Print the actual and expected results in a readable format
+      results `shouldNotBe` []
+      head results `shouldBe` rw input expected
