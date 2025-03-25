@@ -302,31 +302,15 @@ step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) =
     Nothing -> (Nothing, Fail)
     Just pat -> (Nothing, pat)
 -- These cases allow the different and branches to talk with eachother.
-step collect (And b (Rw p1 p2 c1) (Comp (Rw p3 p4 c2) r)) = 
-  let (_, p) = step False (Comp (Rw p3 p3 c2) (Rw p1 p1 c2))
-      (_, x') = step False (Comp p (Rw p1 p2 c1))
-      (_, y') = step False (Comp p (Rw p3 p4 c2))
-      (_, y'') = step False (Comp y' r)
-  in (Nothing, Comp p $ And b x' y'')
-step collect (And b (Comp (Rw p1 p2 c1) r) (Rw p3 p4 c2)) = 
-  let (_, p) = step False (Comp (Rw p3 p3 c2) (Rw p1 p1 c2))
-      (_, x') = step False (Comp p (Rw p1 p2 c1))
-      (_, y') = step False (Comp p (Rw p3 p4 c2))
-      (_, x'') = step False (Comp x' r)
-  in (Nothing, Comp p $ And b x'' y')
-step collect (And b (Comp (Rw p1 p2 c1) r) (Comp (Rw p3 p4 c2) s)) = 
-  let (_, p) = step False (Comp (Rw p3 p3 c2) (Rw p1 p1 c2))
-      (_, x') = step False (Comp p (Rw p1 p2 c1))
-      (_, y') = step False (Comp p (Rw p3 p4 c2))
-      (_, x'') = step False (Comp x' r)
-      (_, y'') = step False (Comp y' s)
-  in (Nothing, Comp p $ And b x'' y'')
+step collect (And b (Rw p1 p2 c1) r) = 
+  (Nothing, Comp (Rw p1 p1 c1) $ And b r (Rw p1 p2 c1))
+step collect (And b (Comp (Rw p1 p2 c1) r) s) = 
+  let (_, x') = step False (Comp (Rw p1 p2 c1) r)
+  in (Nothing, Comp (Rw p1 p1 c1) $ And b s x')
 step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
-step collect (And b x (Or y z)) = step collect (Or (And b x y) (And b x z))
 step collect (And b x y) = 
   let (_, x') = step False x
-      (_, y') = step False y
-  in (Nothing, And b x' y')
+  in (Nothing, And b y x')
 step collect (Comp (And b x y) r) = 
   let (_, a') = step False (And b x y)
   in (Nothing, Comp a' r)
