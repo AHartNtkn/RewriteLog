@@ -307,7 +307,7 @@ step collect (And b (Rw p1 p2 c1) r) =
 step collect (And b (Comp (Rw p1 p2 c1) r) s) = 
   let (_, x') = step False (Comp (Rw p1 p2 c1) r)
   in (Nothing, Comp (Rw p1 p1 c1) $ And b s x')
-step collect (And b (Or x y) z) = step collect (Or (And b x z) (And b y z))
+step collect (And b (Or x y) z) = step collect (Or (And b z x) (And b z y))
 step collect (And b x y) = 
   let (_, x') = step False x
   in (Nothing, And b y x')
