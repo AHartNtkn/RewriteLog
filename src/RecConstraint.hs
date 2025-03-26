@@ -39,8 +39,8 @@ instance Show1 f => Show (RecConstraint f) where
 -- | Process a term until it becomes pure or fails
 processTerm :: Functor f 
             => (String, SimpRec f, Free f Int)
-            -> Maybe (Map Int (String, SimpRec f), Map Int (Free f Int))
-processTerm (s, r, Pure i) = Just (Map.singleton i (s, r), mempty)
+            -> Maybe (Map (Int, String) (SimpRec f), Map Int (Free f Int))
+processTerm (s, r, Pure i) = Just (Map.singleton (i, s) r, mempty)
 processTerm (s, r, Free f) = case runSimpRec r f of
   Nothing -> Nothing
   Just (newPairs, subst) -> do
@@ -55,7 +55,7 @@ processTerm (s, r, Free f) = case runSimpRec r f of
 -- | Process a list of constraints once, collecting pure terms and substitutions
 processOnce :: Functor f 
             => [(String, SimpRec f, Free f Int)]
-            -> Maybe (Map Int (String,SimpRec f), Map Int (Free f Int))
+            -> Maybe (Map (Int, String) (SimpRec f), Map Int (Free f Int))
 processOnce [] = Just (Map.empty, mempty)
 processOnce (tups:rest) = do
   -- Process current pair
@@ -68,25 +68,25 @@ processOnce (tups:rest) = do
 
 -- | Check if any pure terms have substitutions and generate new pairs
 checkPures :: Functor f 
-           => Map Int (String,SimpRec f)  -- Pure terms map
+           => Map (Int, String) (SimpRec f)  -- Pure terms map
            -> Map Int (Free f Int)  -- Substitution map
-           -> ([(String, SimpRec f, Free f Int)], Map Int (String, SimpRec f), Map Int (Free f Int))
+           -> ([(String, SimpRec f, Free f Int)], Map (Int, String) (SimpRec f), Map Int (Free f Int))
 checkPures pureMap subst =
   let 
     -- Find pure terms that have substitutions
-    (matching, nonMatching) = Map.partitionWithKey (\k _ -> Map.member k subst) pureMap
+    (matching, nonMatching) = Map.partitionWithKey (\(k, _) _ -> Map.member k subst) pureMap
     -- Generate new pairs from matching terms
     newPairs = [(name, r, applySubst subst (Pure v)) 
-               | (v, (name, r)) <- Map.toList matching]
+               | ((v, name), r) <- Map.toList matching]
     -- Remove used substitutions
-    remainingSubst = foldr Map.delete subst (Map.keys matching)
+    remainingSubst = foldr Map.delete subst (map fst $ Map.keys matching)
   in
     (newPairs, nonMatching, remainingSubst)
 
 -- | Normalize constraints until reaching a fixed point
 normalizeLoop :: Functor f 
               => [(String, SimpRec f, Free f Int)]  -- Current constraints
-              -> Map Int (String, SimpRec f)        -- Pure terms map
+              -> Map (Int, String) (SimpRec f)        -- Pure terms map
               -> Map Int (Free f Int)       -- Current substitution map
               -> Maybe ([(String, SimpRec f, Free f Int)], Map Int (Free f Int))
 normalizeLoop [] pureMap subst = 
@@ -95,7 +95,7 @@ normalizeLoop [] pureMap subst =
   in if null newPairs
      then 
        -- We're done - convert pure map back to pairs
-       let purePairs = [(name, r, Pure v) | (v, (name, r)) <- Map.toList finalPures]
+       let purePairs = [(name, r, Pure v) | ((v, name), r) <- Map.toList finalPures]
        in Just (purePairs, finalSubst)
      else 
        -- Process new pairs
