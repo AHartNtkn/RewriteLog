@@ -308,33 +308,24 @@ step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) =
 -- These cases allow the different and branches to talk with eachother.
 step collect (And b (Rw p1 p2 c1) r) = 
   return $ Comp (Rw p1 p1 c1) $ And b r (Rw p1 p2 c1)
-step collect (And b (Comp (Rw p1 p2 c1) r) s) = do
-  x' <- step False (Comp (Rw p1 p2 c1) r)
-  return $ Comp (Rw p1 p1 c1) $ And b s x'
+step collect (And b (Comp (Rw p1 p2 c1) r) s) =
+  (Comp (Rw p1 p1 c1) . And b s) <$> step False (Comp (Rw p1 p2 c1) r)
 step collect (And b (Or x y) z) = step collect (Or (And b z x) (And b z y))
-step collect (And b x y) = do
-  x' <- step False x
-  return $ And b y x'
-step collect (Comp (And b x y) r) = do
-  a' <- step False (And b x y)
-  return $ Comp a' r
+step collect (And b x y) = And b y <$> step False x
+step collect (Comp (And b x y) r) = flip Comp r <$> step False (And b x y)
 -- And absorption
 -- (Rw a b) (S ∩ T) ~> (Rw a b) (((Rw b b) S) ∩ ((Rw b b) T))
 -- which is valid since (Rw b b) ⊆ Id. This is an optimization.
-step collect (Comp (Rw p1 p2 c) (And False a b)) = do
-  stepped <- step False (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b))
-  return $ Comp (Rw p1 p2 c) stepped
-step collect (Comp (Rw p1 p2 c) (Comp (And False a b) r)) = do
-  stepped <- step False (Comp (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b)) r)
-  return $ Comp (Rw p1 p2 c) stepped
+step collect (Comp (Rw p1 p2 c) (And False a b)) =
+  Comp (Rw p1 p2 c) <$> step False (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b))
+step collect (Comp (Rw p1 p2 c) (Comp (And False a b) r)) =
+  Comp (Rw p1 p2 c) <$> step False (Comp (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b)) r)
 -- In general, we only have that R(S ∩ T) ⊆ RS ∩ RT, not R(S ∩ T) = RS ∩ RT
 -- So we have to evaluate And until it's no longer there.
-step collect (Comp (Rw p1 p2 c) (And True a b)) = do
-  a' <- step False (And True a b)
-  return $ Comp (Rw p1 p2 c) a'
-step collect (Comp (Rw p1 p2 c) (Comp (And True a b) r)) = do
-  a' <- step False (And True a b)
-  return $ Comp (Rw p1 p2 c) (Comp a' r)
+step collect (Comp (Rw p1 p2 c) (And True a b)) =
+  Comp (Rw p1 p2 c) <$> step False (And True a b)
+step collect (Comp (Rw p1 p2 c) (Comp (And True a b) r)) =
+  (Comp (Rw p1 p2 c) . flip Comp r) <$> step False (And True a b)
 -- Or case
 step collect (Or Fail p) = step collect p
 step collect (Or x y) = do
@@ -346,15 +337,9 @@ step collect (Comp (Or x y) r) =
   if rwLeaf x
   then 
     case r of
-      Comp a r -> do
-        stepped <- step collect (distributeComp (Or x y) a)
-        return $ Comp stepped r
-      r -> do
-        stepped <- step collect (distributeComp (Or x y) r)
-        return stepped
-  else do
-    xy' <- step collect (Or x y)
-    return $ Comp xy' r
+      Comp a r -> flip Comp r <$> step collect (distributeComp (Or x y) a)
+      r -> step collect (distributeComp (Or x y) r)
+  else flip Comp r <$> step collect (Or x y)
 -- Or absorption
 step collect (Comp (Rw p1 p2 c) (Or a b)) = step collect (Or (Comp (Rw p1 p2 c) a) (Comp (Rw p1 p2 c) b))
 step collect (Comp (Rw p1 p2 c) (Comp (Or a b) r)) = step collect (Comp (Or (Comp (Rw p1 p2 c) a) (Comp (Rw p1 p2 c) b)) r)
