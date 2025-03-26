@@ -25,6 +25,7 @@ dependencies:
 - recursion-schemes >= 5.2
 - containers >= 0.6
 - data-fix >= 0.3
+- mtl >= 2.3
 
 ghc-options:
 - -Wall

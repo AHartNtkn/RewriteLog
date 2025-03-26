@@ -9,6 +9,7 @@ module StepSpec (spec) where
 import Test.Hspec
 import RelExp
 import Control.Monad.Free (Free(..))
+import Control.Monad.State (runState)
 import qualified Data.Map as Map
 import Data.Functor.Classes (Show1(..), Eq1(..))
 import Constraint (EmptyConstraint(..))
@@ -29,7 +30,9 @@ instance Eq1 TestF where
   liftEq _ _ _ = False
 
 stepi :: Bool -> RelExp TestF EmptyConstraint -> (Maybe (RelExp TestF EmptyConstraint), RelExp TestF EmptyConstraint)
-stepi = step
+stepi collect expr = 
+  let (next, output) = runState (step collect expr) Nothing
+  in (output, next)
 
 spec :: Spec
 spec = do
