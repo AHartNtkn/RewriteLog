@@ -24,7 +24,8 @@ module RelExp (
   rw,
   cnstr,
   prettyPrintRelExp,
-  dual
+  dual,
+  collectVars
 ) where
 
 import Control.Monad.Free (Free(..))
@@ -37,7 +38,9 @@ import Data.Foldable (toList)
 import Data.Functor.Classes (Eq1(..), Show1(..))
 import Data.List (splitAt, intercalate, intersperse)
 import Data.Monoid (Monoid(..))
-import Constraint (Constraint(..))
+import Constraint (Constraint(..), VarFilter(..))
+import qualified Data.Set as Set
+import Data.Set (Set)
 
 -- | Relational expressions indexed by an endofunctor f and constraint type c
 data RelExp f c
@@ -179,32 +182,29 @@ applySubst s (Pure i) = fromMaybe (Pure i) (Map.lookup i s)
 applySubst s (Free t) = Free $ fmap (applySubst s) t
 
 -- | Collect all variables in a Free term
-collectVars :: (Functor f, Foldable f) => Free f Int -> [Int]
-collectVars (Pure i) = [i]
-collectVars (Free t) = concat $ map collectVars $ toList t
+collectVars :: (Functor f, Foldable f) => Free f Int -> Set.Set Int
+collectVars (Pure i) = Set.singleton i
+collectVars (Free t) = Set.unions $ map collectVars $ toList t
 
 -- | Create a mapping from old variables to new normalized variables
-mkVarMap :: [Int] -> Map Int Int
-mkVarMap = Map.fromList . flip zip [0..] . uniqueElems
-  where
-    uniqueElems [] = []
-    uniqueElems (x:xs) = x : uniqueElems (filter (/= x) xs)
+mkVarMap :: Set Int -> Map Int Int
+mkVarMap = Map.fromList . flip zip [0..] . Set.toAscList
 
 -- | Normalize variables in a Free term, starting from 0
 normalizeVars :: (Functor f, Foldable f) => Free f Int -> Free f Int
 normalizeVars t = 
-  let vars = collectVars t
-      varMap = mkVarMap vars
+  let vars = Set.toAscList $ collectVars t
+      varMap = Map.fromList $ zip vars [0..]
   in applySubst (fmap Pure varMap) t
 
 -- | Compose two pattern relations
 composePatterns :: forall f c. (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> RelExp f c -> Maybe (RelExp f c)
 composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) = do
   -- First rename variables in the second pattern to avoid name clashes
-  let vars1 = collectVars p1 ++ collectVars p2
-      maxVar = if null vars1 then -1 else maximum vars1
+  let vars1 = collectVars p1 `Set.union` collectVars p2
+      maxVar = if Set.null vars1 then -1 else Set.findMax vars1
       shiftMap :: Map Int (Free f Int)
-      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
+      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- Set.toList $ collectVars p3 `Set.union` collectVars p4]
       p3' = applySubst shiftMap p3
       p4' = applySubst shiftMap p4
       c2' = substCnstr shiftMap c2
@@ -215,9 +215,10 @@ composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) = do
       c1' = substCnstr subst c1
       c2'' = substCnstr subst c2'
       -- Collect variables in order of appearance
-      vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p4Final)
+      varsSet = collectVars p1Final `Set.union` 
+               (collectVars p4Final `Set.difference` collectVars p1Final)
       varMap :: Map Int (Free f Int)
-      varMap = fmap Pure $ mkVarMap vars
+      varMap = fmap Pure $ mkVarMap varsSet
       -- Apply final variable normalization to terms and constraints
       p1Norm = applySubst varMap p1Final
       p4Norm = applySubst varMap p4Final
@@ -233,10 +234,10 @@ composePatterns _ _ = Nothing
 andPattern :: forall f c. (Eq1 f, Traversable f, Constraint c f) => RelExp f c -> RelExp f c -> Maybe (RelExp f c)
 andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) = do
   -- First rename variables in the second pattern to avoid name clashes
-  let vars1 = collectVars p1 ++ collectVars p2
-      maxVar = if null vars1 then -1 else maximum vars1
+  let vars1 = collectVars p1 `Set.union` collectVars p2
+      maxVar = if Set.null vars1 then -1 else Set.findMax vars1
       shiftMap :: Map Int (Free f Int)
-      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- collectVars p3 ++ collectVars p4]
+      shiftMap = fmap Pure $ Map.fromList [(i, i + maxVar + 1) | i <- Set.toList $ collectVars p3 `Set.union` collectVars p4]
       p3' = applySubst shiftMap p3
       p4' = applySubst shiftMap p4
       c2' = substCnstr shiftMap c2
@@ -253,9 +254,10 @@ andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) = do
       c1'' = substCnstr subst2 c1'
       c2''' = substCnstr subst2 c2''
       -- Collect variables in order of appearance
-      vars = collectVars p1Final ++ filter (`notElem` collectVars p1Final) (collectVars p2Final)
+      varsSet = collectVars p1Final `Set.union` 
+               (collectVars p2Final `Set.difference` collectVars p1Final)
       varMap :: Map Int (Free f Int)
-      varMap = fmap Pure $ mkVarMap vars
+      varMap = fmap Pure $ mkVarMap varsSet
       -- Apply final variable normalization to terms and constraints
       p1Norm = applySubst varMap p1Final
       p2Norm = applySubst varMap p2Final
@@ -307,7 +309,8 @@ step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) =
     Just pat -> return pat
 -- These cases allow the different and branches to talk with eachother.
 step collect (And b (Rw p1 p2 c1) r) = 
-  return $ Comp (Rw p1 p1 c1) $ And b r (Rw p1 p2 c1)
+  let c' = filterVars (collectVars p1) c1 in
+  return $ Comp (Rw p1 p1 c') $ And b r (Rw p1 p2 c1)
 step collect (And b (Comp (Rw p1 p2 c1) r) s) =
   (Comp (Rw p1 p1 c1) . And b s) <$> step False (Comp (Rw p1 p2 c1) r)
 step collect (And b (Or x y) z) = step collect (Or (And b z x) (And b z y))

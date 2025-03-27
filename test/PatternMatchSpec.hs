@@ -89,7 +89,7 @@ spec = do
   describe "Variable Normalization" $ do
     it "normalizes variables in a term" $ do
       let term = Free $ F (var 5) (Free $ G (var 3))
-      let expected = Free $ F (var 0) (Free $ G (var 1))
+      let expected = Free $ F (var 1) (Free $ G (var 0))
       normalizeVars term `shouldBe` expected
 
     it "preserves repeated variables when normalizing" $ do

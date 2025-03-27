@@ -12,8 +12,10 @@ module RecConstraint (
 import Control.Monad.Free (Free(..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Constraint (Constraint(..))
-import RelExp (applySubst)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Constraint (Constraint(..), VarFilter(..))
+import RelExp (applySubst, collectVars)
 import Data.Functor.Classes (Show1)
 
 -- | Simple recursive constraint function type
@@ -110,7 +112,13 @@ normalizeLoop pairs pureMap subst = do
   -- Continue with new pairs and updated maps
   normalizeLoop newPairs remainingPures remainingSubst
 
-instance (Functor f) => Constraint (RecConstraint f) f where
+instance (Functor f, Foldable f) => VarFilter (RecConstraint f) where
+  filterVars vars (RecConstraint pairs) =
+    RecConstraint [(name, r, t) | (name, r, t) <- pairs, 
+                   let termVars = collectVars t,
+                   all (`Set.member` vars) termVars]
+
+instance (Functor f, Foldable f) => Constraint (RecConstraint f) f where
   normalize (RecConstraint pairs) = do
     (normPairs, subst) <- normalizeLoop pairs Map.empty Map.empty
     return (RecConstraint normPairs, subst)

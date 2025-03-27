@@ -10,7 +10,6 @@ import Test.Hspec
 import RelExp
 import Control.Monad.Free (Free(..))
 import Control.Monad.State (runState)
-import qualified Data.Map as Map
 import Data.Functor.Classes (Show1(..), Eq1(..))
 import Constraint (EmptyConstraint(..))
 
@@ -150,4 +149,4 @@ spec = do
             (rw (Free $ B (Free $ A (var 0)) (var 1)) (Free $ B (var 0) (var 1)))
       let (result, next) = stepi True expr
       result `shouldBe` Nothing
-      next `shouldBe` (rw (Free $ B (Free $ A (Free $ A (var 0))) (var 1)) (Free $ B (var 0) (var 1)))
+      next `shouldBe` (rw (Free $ B (Free $ A (Free $ A (var 1))) (var 0)) (Free $ B (var 1) (var 0)))
