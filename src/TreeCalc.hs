@@ -33,17 +33,17 @@ noUniVar = SimpRec $ \case
   F x y -> Just ([("noUniVar", noUniVar, x), ("noUniVar", noUniVar, y)], mempty)
 
 instance Eq1 TreeCalcF where
-  liftEq eq (C n) (C n') = n == n'
-  liftEq eq L L = True
+  liftEq _  (C n) (C n') = n == n'
+  liftEq _  L L = True
   liftEq eq (B x) (B y) = eq x y
   liftEq eq (F x y) (F x' y') = eq x x' && eq y y'
   liftEq _ _ _ = False
 
 instance Show1 TreeCalcF where
-  liftShowsPrec sp _ d (C n) = showString "C " . shows n
+  liftShowsPrec _ _ _ (C n) = showString "C " . shows n
   liftShowsPrec _ _ _ L = showString "L"
-  liftShowsPrec sp _ d (B x) = showString "B " . sp 11 x
-  liftShowsPrec sp _ d (F x y) = showString "F " . sp 11 x . showChar ' ' . sp 11 y
+  liftShowsPrec sp _ _ (B x) = showString "B " . sp 11 x
+  liftShowsPrec sp _ _ (F x y) = showString "F " . sp 11 x . showChar ' ' . sp 11 y
 
 type TreeCalc = Free TreeCalcF
 

@@ -13,7 +13,7 @@ module SExpF
 
 import Data.Functor.Classes (Eq1(..), Show1(..))
 import Control.Monad.Free (Free(..))
-import RelExp (RelExp(..), mkOr, mkComp)
+import RelExp ()
 
 -- | S-expression functor
 data SExpF x = Atom String | Cons x x
@@ -23,13 +23,13 @@ deriving instance Show x => Show (SExpF x)
 
 -- | Make SExpF an instance of Eq1
 instance Eq1 SExpF where
-  liftEq eq (Atom s1) (Atom s2) = s1 == s2
+  liftEq _ (Atom s1) (Atom s2) = s1 == s2
   liftEq eq (Cons h1 t1) (Cons h2 t2) = eq h1 h2 && eq t1 t2
   liftEq _ _ _ = False
 
 -- | Make SExpF an instance of Show1
 instance Show1 SExpF where
-  liftShowsPrec sp _ _ (Atom s) = showString s
+  liftShowsPrec _ _ _ (Atom s) = showString s
   liftShowsPrec sp _ _ (Cons x y) = showChar '(' . sp 0 x . showChar ' ' . sp 0 y . showChar ')'
 
 -- | Pretty print an S-expression

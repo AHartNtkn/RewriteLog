@@ -26,7 +26,7 @@ source-repository head
 library
   exposed-modules:
       Constraint
-      Lib
+      Examples.Layton
       RecConstraint
       RelExp
       SExpF

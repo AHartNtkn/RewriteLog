@@ -29,15 +29,14 @@ module RelExp (
 ) where
 
 import Control.Monad.Free (Free(..))
-import Control.Monad.State (State, get, put, runState)
+import Control.Monad.State (State, put, runState)
 import Control.Monad (when)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
+import Data.List (intersperse)
 import Data.Map (Map)
 import Data.Foldable (toList)
 import Data.Functor.Classes (Eq1(..), Show1(..))
-import Data.List (splitAt, intercalate, intersperse)
-import Data.Monoid (Monoid(..))
 import Constraint (Constraint(..), VarFilter(..))
 import qualified Data.Set as Set
 import Data.Set (Set)
@@ -118,7 +117,7 @@ prettyPrintRelExp depth (Comp p1 p2) =
 
 -- | Helper function to show Free terms using Show1
 showsPrec1 :: Show1 f => Int -> Free f Int -> ShowS
-showsPrec1 d (Pure i) = shows i
+showsPrec1 _ (Pure i) = shows i
 showsPrec1 d (Free f) = showsPrec1String d f
 
 -- | Helper function to show Free terms using Show1
@@ -280,54 +279,54 @@ distributeComp x a = Comp x a
 
 step :: (Eq1 f, Traversable f, Constraint c f) => Bool -> RelExp f c -> State (Maybe (RelExp f c)) (RelExp f c)
 -- Base cases
-step collect Fail = return Fail
+step _       Fail = return Fail
 step collect (Rw x y c) = do
   when collect $ put (Just (Rw x y c))
   return $ if collect then Fail else Rw x y c
 -- Failure cases
-step collect (Comp Fail _) = return Fail
-step collect (Comp _ Fail) = return Fail
-step collect (Comp _ (Comp Fail _)) = return Fail
+step _       (Comp Fail _) = return Fail
+step _       (Comp _ Fail) = return Fail
+step _       (Comp _ (Comp Fail _)) = return Fail
 -- Composition normalization
 step collect (Comp (Comp p1 p2) p3) = step collect (Comp p1 (Comp p2 p3))
 step collect (Comp p1 (Comp (Comp p2 p3) p4)) = step collect (Comp p1 (Comp p2 (Comp p3 p4)))
 -- Rewrite fusion
-step collect (Comp (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
+step _       (Comp (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
   case composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> return Fail
     Just composed -> return composed
-step collect (Comp (Rw p1 p2 c1) (Comp (Rw p3 p4 c2) r)) = 
+step _       (Comp (Rw p1 p2 c1) (Comp (Rw p3 p4 c2) r)) = 
   case composePatterns (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> return Fail
     Just composed -> return $ Comp composed r
 -- And evaluation
-step collect (And _ Fail _) = return Fail
-step collect (And _ _ Fail) = return Fail
-step collect (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
+step _       (And _ Fail _) = return Fail
+step _       (And _ _ Fail) = return Fail
+step _       (And _ (Rw p1 p2 c1) (Rw p3 p4 c2)) = 
   case andPattern (Rw p1 p2 c1) (Rw p3 p4 c2) of
     Nothing -> return Fail
     Just pat -> return pat
 -- These cases allow the different and branches to talk with eachother.
-step collect (And b (Rw p1 p2 c1) r) = 
+step _       (And b (Rw p1 p2 c1) r) = 
   let c' = filterVars (collectVars p1) c1 in
   return $ Comp (Rw p1 p1 c') $ And b r (Rw p1 p2 c1)
-step collect (And b (Comp (Rw p1 p2 c1) r) s) =
+step _       (And b (Comp (Rw p1 p2 c1) r) s) =
   (Comp (Rw p1 p1 c1) . And b s) <$> step False (Comp (Rw p1 p2 c1) r)
 step collect (And b (Or x y) z) = step collect (Or (And b z x) (And b z y))
-step collect (And b x y) = And b y <$> step False x
-step collect (Comp (And b x y) r) = flip Comp r <$> step False (And b x y)
+step _       (And b x y) = And b y <$> step False x
+step _       (Comp (And b x y) r) = flip Comp r <$> step False (And b x y)
 -- And absorption
 -- (Rw a b) (S ∩ T) ~> (Rw a b) (((Rw b b) S) ∩ ((Rw b b) T))
 -- which is valid since (Rw b b) ⊆ Id. This is an optimization.
-step collect (Comp (Rw p1 p2 c) (And False a b)) =
+step _       (Comp (Rw p1 p2 c) (And False a b)) =
   Comp (Rw p1 p2 c) <$> step False (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b))
-step collect (Comp (Rw p1 p2 c) (Comp (And False a b) r)) =
+step _       (Comp (Rw p1 p2 c) (Comp (And False a b) r)) =
   Comp (Rw p1 p2 c) <$> step False (Comp (And True (Comp (Rw p2 p2 c) a) (Comp (Rw p2 p2 c) b)) r)
 -- In general, we only have that R(S ∩ T) ⊆ RS ∩ RT, not R(S ∩ T) = RS ∩ RT
 -- So we have to evaluate And until it's no longer there.
-step collect (Comp (Rw p1 p2 c) (And True a b)) =
+step _       (Comp (Rw p1 p2 c) (And True a b)) =
   Comp (Rw p1 p2 c) <$> step False (And True a b)
-step collect (Comp (Rw p1 p2 c) (Comp (And True a b) r)) =
+step _       (Comp (Rw p1 p2 c) (Comp (And True a b) r)) =
   (Comp (Rw p1 p2 c) . flip Comp r) <$> step False (And True a b)
 -- Or case
 step collect (Or Fail p) = step collect p
@@ -340,8 +339,8 @@ step collect (Comp (Or x y) r) =
   if rwLeaf x
   then 
     case r of
-      Comp a r -> flip Comp r <$> step collect (distributeComp (Or x y) a)
-      r -> step collect (distributeComp (Or x y) r)
+      Comp a r' -> flip Comp r' <$> step collect (distributeComp (Or x y) a)
+      r' -> step collect (distributeComp (Or x y) r')
   else flip Comp r <$> step collect (Or x y)
 -- Or absorption
 step collect (Comp (Rw p1 p2 c) (Or a b)) = step collect (Or (Comp (Rw p1 p2 c) a) (Comp (Rw p1 p2 c) b))

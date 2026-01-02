@@ -5,14 +5,12 @@
 
 module RecConstraint (
   SimpRec(..),
-  RecConstraint(..),
-  RecConstraint
+  RecConstraint(..)
 ) where
 
 import Control.Monad.Free (Free(..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Constraint (Constraint(..), VarFilter(..))
 import RelExp (applySubst, collectVars)
@@ -43,7 +41,7 @@ processTerm :: Functor f
             => (String, SimpRec f, Free f Int)
             -> Maybe (Map (Int, String) (SimpRec f), Map Int (Free f Int))
 processTerm (s, r, Pure i) = Just (Map.singleton (i, s) r, mempty)
-processTerm (s, r, Free f) = case runSimpRec r f of
+processTerm (_, r, Free f) = case runSimpRec r f of
   Nothing -> Nothing
   Just (newPairs, subst) -> do
     -- Process each new pair recursively
